@@ -16,6 +16,6 @@ class NERDataCollator(DataCollatorWithPadding):
 
         labels = [feature['labels'] for feature in features]
         labels = [torch.tensor([LABEL_TO_IDX[label] for label in batch_label]) for batch_label in labels]
-        labels = pad_sequence(labels, padding_value=LABEL_TO_IDX[PAD_LABEL], batch_first=True)
+        labels = pad_sequence(labels, padding_value=0, batch_first=True)
         # import pdb; pdb.set_trace()
         return {'input_ids': batch['input_ids'], 'attention_mask': batch['attention_mask'], 'word_ids': word_ids, 'labels': labels}

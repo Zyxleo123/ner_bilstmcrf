@@ -12,6 +12,9 @@ from src.variable import LABEL_TO_IDX, PAD_LABEL
 
 builder.has_sufficient_disk_space = lambda needed_bytes, directory=".": True
 
+import torch
+torch.set_float32_matmul_precision('medium' | 'high')
+
 def print_hparams(hparams):
     # haparams: Namespace
     print("Hyperparameters:")
@@ -79,8 +82,8 @@ def main(hparams):
 
     print("Training model...")
     collator = NERDataCollator(tokenizer=tokenizer)
-    train_loader = DataLoader(train_dataset, collate_fn=collator, batch_size=hparams.batch_size)
-    val_loader = DataLoader(val_dataset, collate_fn=collator, batch_size=hparams.batch_size)
+    train_loader = DataLoader(train_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
+    val_loader = DataLoader(val_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
     logger = TensorBoardLogger("tb_logs", name=get_run_name(hparams))
     trainer = Trainer(max_epochs=hparams.epoch, fast_dev_run=hparams.fast_dev_run, logger=logger)
     trainer.fit(model, train_loader, val_loader)

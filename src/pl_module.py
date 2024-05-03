@@ -16,6 +16,7 @@ class LightningBiLSTMCRF(LightningModule):
         self.optimizer = optimizer
         self.val_gts = []
         self.val_preds = []
+        self.save_hyperparameters()
 
     def forward(self, input_ids, word_ids):
         return self.model(input_ids, word_ids)
@@ -24,7 +25,7 @@ class LightningBiLSTMCRF(LightningModule):
         start_time = time.time()
         loss = self.model.calculate_loss(**batch)
         print(f"Training step time: {time.time()-start_time:.2f}s")
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log('train_loss', loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
