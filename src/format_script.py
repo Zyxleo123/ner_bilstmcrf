@@ -1,7 +1,5 @@
+import os
 import pandas as pd
-
-
-df = pd.read_csv('input.csv')
 replacements = {
     'O': 0,
     'S-GPE': 1,
@@ -20,7 +18,14 @@ replacements = {
     'B-PER': 14,
     'E-PER': 15,
     'M-PER': 16
-
 }
-df = df.replace(replacements)
-df.to_csv('output.csv',index=False)
+input_dir = 'outputs'
+output_dir = 'results'
+for input_file in os.listdir(input_dir):
+    import pdb; pdb.set_trace()
+    df = pd.read_csv(os.path.join(input_dir, input_file))
+    df = df.replace(replacements)
+    df = df.reset_index(drop=True)
+    df.index += 1
+    df.index.name = 'id'
+    df.to_csv(os.path.join(output_dir, input_file.replace('txt', 'csv')), index=True)

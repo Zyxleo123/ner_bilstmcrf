@@ -3,17 +3,15 @@ from transformers import AutoTokenizer
 from datasets import Dataset, builder
 from pytorch_lightning import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from argparse import ArgumentParser
 from src.dataset import NERDataset
 from src.collator import NERDataCollator
 from src.pl_module import LightningBiLSTMCRF
-from src.variable import LABEL_TO_IDX, PAD_LABEL
+from src.variable import LABEL_TO_IDX, get_run_name
 
 builder.has_sufficient_disk_space = lambda needed_bytes, directory=".": True
-
-import torch
-torch.set_float32_matmul_precision('medium' | 'high')
 
 def print_hparams(hparams):
     # haparams: Namespace
@@ -21,31 +19,23 @@ def print_hparams(hparams):
     for k, v in vars(hparams).items():
         print(f"{k}: {v}")
 
-def get_run_name(hparams):
-    # include(in order): pretrained_model_name, bert_lr, lstm_lr, char_level(if true)
-    run_name = hparams.pretrained_model_name.split("/")[-1]
-    run_name += f"_bertlr{hparams.bert_lr}"
-    run_name += f"_lstmlr{hparams.lstm_lr}"
-    if hparams.char_level:
-        run_name += "_char"
-    return run_name
-
 def main(hparams):
 
     print_hparams(hparams)
     print("Initializing tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-chinese")
+    tokenizer = AutoTokenizer.from_pretrained(hparams.pretrained_model_name)
 
     print("Initializing model...")
     model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_layer_num, hparams.lstm_state_dim, 
                             bert_lr=hparams.bert_lr, lstm_lr=hparams.lstm_lr, crf_lr=hparams.crf_lr,
-                            char_level=hparams.char_level, optimizer=hparams.optimizer, pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0)
+                            char_level=hparams.char_level, optimizer=hparams.optimizer, anneal=hparams.anneal,
+                            pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0)
 
     print("Initializing dataset...")
     train_dataset_name = "toy" if hparams.toy else "train"
-    train_dataset = NERDataset(train_dataset_name, LABEL_TO_IDX)
+    train_dataset = NERDataset(train_dataset_name, LABEL_TO_IDX, upsample=hparams.upsample)
     val_dataset_name = "toy" if hparams.toy else "dev"
-    val_dataset = NERDataset(val_dataset_name, LABEL_TO_IDX)
+    val_dataset = NERDataset(val_dataset_name, LABEL_TO_IDX, upsample=False)
     def train_generator():
         for i in range(len(train_dataset)):
             yield {"text": train_dataset.text[i], "labels": train_dataset.labels[i]}
@@ -81,11 +71,16 @@ def main(hparams):
     val_dataset = val_dataset.map(tokenize, batched=True, batch_size=hparams.batch_size, remove_columns=["text"])
 
     print("Training model...")
+    run_name = get_run_name(hparams)
     collator = NERDataCollator(tokenizer=tokenizer)
-    train_loader = DataLoader(train_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
+    train_loader = DataLoader(train_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47, shuffle=True)
     val_loader = DataLoader(val_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
-    logger = TensorBoardLogger("tb_logs", name=get_run_name(hparams))
-    trainer = Trainer(max_epochs=hparams.epoch, fast_dev_run=hparams.fast_dev_run, logger=logger)
+    logger = TensorBoardLogger("tb_logs2" if hparams.search else "run", name=run_name)
+    if not hparams.search:
+        on_val_loss = ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=3, dirpath=f"best_models/{run_name}", filename="{epoch}-{val_loss:.4f}-{val_f1:.4f}")
+        on_val_f1 = ModelCheckpoint(monitor="val_f1", mode="max", save_top_k=3, dirpath=f"best_models/{run_name}", filename="{epoch}-{val_loss:.4f}-{val_f1:.4f}")
+    trainer = Trainer(max_epochs=hparams.epoch, fast_dev_run=hparams.fast_dev_run, logger=logger, log_every_n_steps=1, 
+                    enable_checkpointing=not hparams.search, callbacks=[on_val_loss, on_val_f1] if not hparams.search else None)
     trainer.fit(model, train_loader, val_loader)
 
 if __name__ == "__main__":
@@ -102,5 +97,8 @@ if __name__ == "__main__":
     parser.add_argument("--char_level", default=False, action="store_true")
     parser.add_argument("--optimizer", default="adam", type=str)
     parser.add_argument("--pretrained_model_name", default="bert-base-chinese", type=str)
+    parser.add_argument("--search", default=False, action="store_true")
+    parser.add_argument("--anneal", default=False, action="store_true")
+    parser.add_argument("--upsample", default=False, action="store_true")
     args = parser.parse_args()
     main(args)

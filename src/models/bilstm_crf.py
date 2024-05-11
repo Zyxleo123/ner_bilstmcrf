@@ -14,6 +14,7 @@ class BiLSTMCRF(nn.Module):
         self.lstm_state_dim = lstm_state_dim
         self.K = len(label_to_idx)
         self.char_level = char_level
+        self.label_to_idx = label_to_idx
 
         self.bert_like_model = AutoModel.from_pretrained(pretrained_model_name)
         if freeze_bert:
@@ -24,6 +25,11 @@ class BiLSTMCRF(nn.Module):
                             bidirectional=True, batch_first=False, bias=False)
         self.projection = nn.Linear(self.lstm_state_dim, self.K)
         self.crf = CRF(self.K, batch_first=False)
+        # The `self.set_transitions()` method in the `BiLSTMCRF` class is setting transition scores in
+        # the CRF (Conditional Random Field) layer based on the predefined transition rules for the
+        # specific named entity recognition task.
+        # self.set_transitions()
+        self.dropout = nn.Dropout(0.3)
 
 
     def _bilstm(self, input_ids, attention_mask, word_ids):
@@ -32,15 +38,15 @@ class BiLSTMCRF(nn.Module):
         embeds = embeds.permute(1, 0, 2)
         print(f"Embedding time: {time.time()-start_time:.2f}s")
 
-        feats, self.state = self.lstm(embeds)
-
         if not self.char_level:
             start_time = time.time()
             feats, word_masks = self._char_feat_to_word_feat(feats, word_ids, attention_mask)
             print(f"Convert time: {time.time()-start_time:.2f}s")
         else:
             word_masks = attention_mask.T.bool()
+        feats, self.state = self.lstm(embeds)
 
+        feats = self.dropout(feats)
         emit_scores = self.projection(feats)
         return emit_scores, word_masks
 
@@ -135,11 +141,11 @@ class BiLSTMCRF(nn.Module):
         # from E-* to M-*/E-*/
         for to_entity in ENTITY_SUB_TYPE:
             for from_entity in ENTITY_SUB_TYPE:
-                self.crf.trainsitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
-                self.crf.trainsitions.data[self.label_to_idx['E-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
+                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
+                self.crf.transitions.data[self.label_to_idx['E-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
 
         # from O to M-*/E-*
         for entity in ENTITY_SUB_TYPE:
-            self.crf.trainsitions.data[self.label_to_idx['O'], self.label_to_idx['M-'+entity]] = -10000.
-            self.crf.trainsitions.data[self.label_to_idx['O'], self.label_to_idx['E-'+entity]] = -10000.
-        
+            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['M-'+entity]] = -10000.
+            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['E-'+entity]] = -10000.
+

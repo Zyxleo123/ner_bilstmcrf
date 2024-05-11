@@ -24,3 +24,12 @@ IDX_TO_LABEL = {v: k for k, v in LABEL_TO_IDX.items()}
 SPECIAL_LABELS = [START_LABEL, STOP_LABEL, PAD_LABEL]
 LABELS = [k for k in LABEL_TO_IDX.keys() if k not in SPECIAL_LABELS]
 ENTITY_SUB_TYPE = ['GPE', 'LOC', 'ORG', 'PER']
+
+def get_run_name(hparams):
+    run_name = hparams.pretrained_model_name.split("/")[-1]
+    run_name += f"_bertlr={hparams.bert_lr}"
+    run_name += f"_lstmlr={hparams.lstm_lr}"
+    run_name += f"_opt={hparams.optimizer}"
+    run_name += f"_dim={hparams.lstm_state_dim}"
+    run_name += f"_anneal={hparams.anneal}"
+    return run_name
