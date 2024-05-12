@@ -7,14 +7,13 @@ from .variable import LABELS, IDX_TO_LABEL, get_run_name
 
 class LightningBiLSTMCRF(LightningModule):
     def __init__(self, label_to_idx, lstm_state_dim,
-                bert_lr, lstm_lr, crf_lr, optimizer, scheduler,
+                bert_lr, lstm_lr, optimizer, scheduler,
                 pretrained_model_name, freeze_bert,
                 epochs, steps_per_epoch):
         super(LightningBiLSTMCRF, self).__init__()
         self.model = BiLSTMCRF(label_to_idx, lstm_state_dim, pretrained_model_name, freeze_bert)
         self.bert_lr = bert_lr
         self.lstm_lr = lstm_lr
-        self.crf_lr = crf_lr
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.freeze_bert = freeze_bert
@@ -76,8 +75,7 @@ class LightningBiLSTMCRF(LightningModule):
     def configure_optimizers(self):
         # apply smaller learning rate to the bert model
         bert_params = self.model.bert_like_model.parameters()
-        crf_params = self.model.crf.parameters()
-        lstm_params = [p for p in self.model.parameters() if id(p) not in map(id, bert_params) and id(p) not in map(id, crf_params)]
+        other_params = [p for p in self.model.parameters() if id(p) not in map(id, bert_params)]
         
         if self.optimizer == 'adam':
             optimizer_type = torch.optim.Adam
@@ -91,14 +89,12 @@ class LightningBiLSTMCRF(LightningModule):
         momentum = {'momentum': 0.9} if self.optimizer == 'sgd' else {}
         if self.bert_lr == 0.:
             optimizer = optimizer_type([
-                {'params': crf_params, 'lr': self.crf_lr}, 
-                {'params': lstm_params, 'lr': self.lstm_lr},
+                {'params': other_params, 'lr': self.lstm_lr},
             ], lr=self.lstm_lr, **momentum)
         else:
             optimizer = optimizer_type([
                 {'params': bert_params, 'lr': self.bert_lr},
-                {'params': crf_params, 'lr': self.crf_lr}, 
-                {'params': lstm_params, 'lr': self.lstm_lr},
+                {'params': other_params, 'lr': self.lstm_lr},
             ], lr=self.lstm_lr, **momentum)
         if self.scheduler == 'anneal':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=self.epochs//5)

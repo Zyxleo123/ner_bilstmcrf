@@ -57,7 +57,6 @@ def vast():
             else:
                 python_command.extend(["--bert_lr", str(MODEL_LR['ernie'])])
         python_command.extend(["--lstm_lr", str(lr)])
-        python_command.extend(["--crf_lr", str(lr)])
         python_command.extend(["--pretrained_model_name", pretrained_model_name])
         python_command.extend(["--scheduler", scheduler])
         
