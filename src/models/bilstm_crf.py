@@ -19,9 +19,9 @@ class BiLSTMCRF(nn.Module):
             for param in self.bert_like_model.parameters():
                 param.requires_grad = False
         self.embedding_dim = self.bert_like_model.config.hidden_size
-        self.lstm = nn.LSTM(self.embedding_dim, self.lstm_state_dim // 2, num_layers=1, 
-                            bidirectional=True, batch_first=False, bias=False)
-        self.projection = nn.Linear(self.lstm_state_dim, self.K)
+        # self.lstm = nn.LSTM(self.embedding_dim, self.lstm_state_dim // 2, num_layers=1, 
+                            # bidirectional=True, batch_first=False, bias=False)
+        self.projection = nn.Linear(self.embedding_dim, self.K)
         self.crf = CRF(self.K, batch_first=False)
         # The `self.set_transitions()` method in the `BiLSTMCRF` class is setting transition scores in
         # the CRF (Conditional Random Field) layer based on the predefined transition rules for the
@@ -36,7 +36,8 @@ class BiLSTMCRF(nn.Module):
         embeds = embeds.permute(1, 0, 2) # change to time-step first
         print(f"Embedding time: {time.time()-start_time:.2f}s")
 
-        feats, self.state = self.lstm(embeds)
+        # feats, self.state = self.lstm(embeds)
+        feats = embeds
         start_time = time.time()
         feats, word_masks = self._char_feat_to_word_feat(feats, word_ids, attention_mask)
         print(f"Convert time: {time.time()-start_time:.2f}s")
