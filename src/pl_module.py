@@ -115,11 +115,9 @@ class LightningBiLSTMCRF(LightningModule):
             return optimizer
 
 def classification_report(gt, pred, label_set):
-    # return a dict that report: 
-    # {'label1': {'precision': 0.5, 'recall': 0.5, 'f1-score': 0.5, 'support': 1}, ..., 'macro avg': {'precision': 0.5, 'recall': 0.5, 'f1-score': 0.5, 'support': 1}, 'weighted avg': {'precision': 0.5, 'recall': 0.5, 'f1-score': 0.5, 'support': 1}}
-    report = {}
+    label_wise_metrics = {}
     for label in label_set:
-        report[label] = {}
+        label_wise_metrics[label] = {}
         tp = fp = fn = 0
         for g, p in zip(gt, pred):
             for gg, pp in zip(g, p):
@@ -129,26 +127,27 @@ def classification_report(gt, pred, label_set):
                     fn += 1
                 elif gg != label and pp == label:
                     fp += 1
-        report[label]['precision'] = tp / (tp + fp) if tp + fp != 0 else 0
-        report[label]['recall'] = tp / (tp + fn) if tp + fn != 0 else 0
-        report[label]['f1-score'] = 2 * report[label]['precision'] * report[label]['recall'] / (report[label]['precision'] + report[label]['recall']) if report[label]['precision'] + report[label]['recall'] != 0 else 0
-        report[label]['support'] = tp + fn
-    macro_avg = {'precision': 0, 'recall': 0, 'f1-score': 0, 'support': 0}
+        label_wise_metrics[label]['precision'] = tp / (tp + fp) if tp + fp != 0 else 0
+        label_wise_metrics[label]['recall'] = tp / (tp + fn) if tp + fn != 0 else 0
+        label_wise_metrics[label]['f1-score'] = 2 * label_wise_metrics[label]['precision'] * label_wise_metrics[label]['recall'] / (label_wise_metrics[label]['precision'] + label_wise_metrics[label]['recall']) if label_wise_metrics[label]['precision'] + label_wise_metrics[label]['recall'] != 0 else 0
+        label_wise_metrics[label]['support'] = tp + fn
+
+    macro_metrics = {'precision': 0, 'recall': 0, 'f1-score': 0, 'support': 0}
     for label in label_set:
-        macro_avg['precision'] += report[label]['precision']
-        macro_avg['recall'] += report[label]['recall']
-        macro_avg['f1-score'] += report[label]['f1-score']
-        macro_avg['support'] += report[label]['support']
-    macro_avg['precision'] /= len(label_set)
-    macro_avg['recall'] /= len(label_set)
-    macro_avg['f1-score'] /= len(label_set)
-    report['macro avg'] = macro_avg
-    # pop precision & recall in every label
+        macro_metrics['precision'] += label_wise_metrics[label]['precision']
+        macro_metrics['recall'] += label_wise_metrics[label]['recall']
+        macro_metrics['f1-score'] += label_wise_metrics[label]['f1-score']
+        macro_metrics['support'] += label_wise_metrics[label]['support']
+    macro_metrics['precision'] /= len(label_set)
+    macro_metrics['recall'] /= len(label_set)
+    macro_metrics['f1-score'] /= len(label_set)
+    
+    label_wise_metrics['macro avg'] = macro_metrics
     for label in label_set:
-        report[label].pop('precision')
-        report[label].pop('recall')
-    report = dict_flatten(report)
-    return report
+        label_wise_metrics[label].pop('precision')
+        label_wise_metrics[label].pop('recall')
+    label_wise_metrics = dict_flatten(label_wise_metrics)
+    return label_wise_metrics
 
 def dict_flatten(d, parent_key='', sep='_'):
     items = []
