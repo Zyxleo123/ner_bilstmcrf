@@ -12,9 +12,8 @@ env_command = \
 batch_size = 12
 command = [
     "python", "train.py",
-    "--epoch", "20",
+    "--epoch", "10",
     "--batch_size", str(batch_size),
-    "--lstm_layer_num", "1",
     "--search"
 ]
 
@@ -37,8 +36,8 @@ class Hparams:
 
 def vast():
     lstm_lr = [1e-3, 5e-4, 5e-3]
-    bert_lr = [LR_FREEZE, LR_MODEL]
-    optimizer = ['adamw', 'sgd']
+    bert_lr = [LR_FREEZE]
+    optimizer = ['adamw']
     pretrained_model_names = [
                 'ckiplab/bert-base-chinese-ner'
             ]

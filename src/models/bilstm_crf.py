@@ -8,9 +8,8 @@ from ..variable import *
 
 class BiLSTMCRF(nn.Module):
 
-    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim, pretrained_model_name='bert-base-chinese', freeze_bert=False):
+    def __init__(self, label_to_idx, lstm_state_dim, pretrained_model_name='bert-base-chinese', freeze_bert=False):
         super(BiLSTMCRF, self).__init__()
-        self.lstm_layer_num = lstm_layer_num
         self.lstm_state_dim = lstm_state_dim
         self.K = len(label_to_idx)
         self.label_to_idx = label_to_idx
@@ -20,7 +19,7 @@ class BiLSTMCRF(nn.Module):
             for param in self.bert_like_model.parameters():
                 param.requires_grad = False
         self.embedding_dim = self.bert_like_model.config.hidden_size
-        self.lstm = nn.LSTM(self.embedding_dim, self.lstm_state_dim // 2, num_layers=self.lstm_layer_num, 
+        self.lstm = nn.LSTM(self.embedding_dim, self.lstm_state_dim // 2, num_layers=1, 
                             bidirectional=True, batch_first=False, bias=False)
         self.projection = nn.Linear(self.lstm_state_dim, self.K)
         self.crf = CRF(self.K, batch_first=False)

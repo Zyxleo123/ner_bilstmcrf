@@ -54,7 +54,7 @@ def main(hparams):
     val_loader = DataLoader(val_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
 
     print("Initializing model...")
-    model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_layer_num, hparams.lstm_state_dim, 
+    model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_state_dim, 
                             bert_lr=hparams.bert_lr, lstm_lr=hparams.lstm_lr, crf_lr=hparams.crf_lr,
                             optimizer=hparams.optimizer, scheduler=hparams.scheduler,
                             pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0,

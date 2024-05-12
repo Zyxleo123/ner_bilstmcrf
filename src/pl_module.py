@@ -6,12 +6,12 @@ from .models import BiLSTMCRF
 from .variable import LABELS, IDX_TO_LABEL, get_run_name
 
 class LightningBiLSTMCRF(LightningModule):
-    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim,
+    def __init__(self, label_to_idx, lstm_state_dim,
                 bert_lr, lstm_lr, crf_lr, optimizer, scheduler,
                 pretrained_model_name, freeze_bert,
                 epochs, steps_per_epoch):
         super(LightningBiLSTMCRF, self).__init__()
-        self.model = BiLSTMCRF(label_to_idx, lstm_layer_num, lstm_state_dim, pretrained_model_name, freeze_bert)
+        self.model = BiLSTMCRF(label_to_idx, lstm_state_dim, pretrained_model_name, freeze_bert)
         self.bert_lr = bert_lr
         self.lstm_lr = lstm_lr
         self.crf_lr = crf_lr
@@ -101,7 +101,7 @@ class LightningBiLSTMCRF(LightningModule):
                 {'params': lstm_params, 'lr': self.lstm_lr},
             ], lr=self.lstm_lr, **momentum)
         if self.scheduler == 'anneal':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=self.epochs//5)
             return [optimizer], [scheduler]
         elif self.scheduler == 'onecycle':
             if not self.freeze_bert:
