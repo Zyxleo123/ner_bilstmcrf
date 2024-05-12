@@ -8,12 +8,11 @@ from ..variable import *
 
 class BiLSTMCRF(nn.Module):
 
-    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim, char_level=False, pretrained_model_name='bert-base-chinese', freeze_bert=False):
+    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim, pretrained_model_name='bert-base-chinese', freeze_bert=False):
         super(BiLSTMCRF, self).__init__()
         self.lstm_layer_num = lstm_layer_num
         self.lstm_state_dim = lstm_state_dim
         self.K = len(label_to_idx)
-        self.char_level = char_level
         self.label_to_idx = label_to_idx
 
         self.bert_like_model = AutoModel.from_pretrained(pretrained_model_name)
@@ -38,14 +37,10 @@ class BiLSTMCRF(nn.Module):
         embeds = embeds.permute(1, 0, 2)
         print(f"Embedding time: {time.time()-start_time:.2f}s")
 
-        if not self.char_level:
-            start_time = time.time()
-            feats, word_masks = self._char_feat_to_word_feat(feats, word_ids, attention_mask)
-            print(f"Convert time: {time.time()-start_time:.2f}s")
-        else:
-            word_masks = attention_mask.T.bool()
         feats, self.state = self.lstm(embeds)
-
+        start_time = time.time()
+        feats, word_masks = self._char_feat_to_word_feat(feats, word_ids, attention_mask)
+        print(f"Convert time: {time.time()-start_time:.2f}s")
         feats = self.dropout(feats)
         emit_scores = self.projection(feats)
         return emit_scores, word_masks
@@ -57,27 +52,39 @@ class BiLSTMCRF(nn.Module):
         # Output: word_feats: W x B x D, masks: W x B; W is the max word number in a batch; pad word_feats and masks with 0
     
         L, B, D = char_feats.shape
+        # word_nums marks how many words each batch has
         word_nums = torch.max(word_ids, dim=1)[0] + 1 # B
-        char_nums = torch.sum(attention_mask, dim=1)-2 # B
+        # char_nums marks how many non-special tokens(subwords) each batch has
+        char_nums = torch.sum(attention_mask, dim=1) - 2 # B
         max_word_num = torch.max(word_nums)
         word_char_num = torch.zeros(max_word_num, B, dtype=torch.long, device=char_feats.device)
+
+        # Count how many subwords every word has in each batch.
         for b in range(B):
-            # e.g. [-1, 0, 1, 1, -1, -1] -> [1, 2, 0, 0, 0, 0]
-            # bincount can't handle negative values, so add 1 to word_ids
+            # e.g. [-1, 0, 0, 0, 1, 1, -1, -1, -1, -1] -> [3, 2, 0, 0, 0, 0]
+            # Bincount can't handle negative values, so add 1 to word_ids
             word_char_num[:, b] = torch.bincount(word_ids[b] + 1, minlength=max_word_num+1)[1:]
         
+        # Sum subword features.
         word_feats = torch.zeros(max_word_num, B, D, dtype=torch.float, device=char_feats.device)
         for b in range(B):
             # e.g. word_ids[0] = [-1, 0, 1, 1, 2, -1, -1], then word_feats[1] is the average of char_feats[2] and char_feats[3]
+            # The symantic of the following line: for each valid char_feat(not special token) in char_feats,
+            #   we add it to a word_feat in word_feats. The word_feat is determined by the 2nd parameter of index_add_, which is
+            #   the valid word_id(no special token) of this batch.
             word_feats[:, b, :].index_add_(0, word_ids[b, 1:1+char_nums[b]], char_feats[1:1+char_nums[b], b, :])
 
+        # Take means of sums.
         for b in range(B):
             word_num = word_nums[b]
-            word_feats[:word_num, b, :] = word_feats[:word_num, b, :] / word_char_num[:word_num, b].unsqueeze(1)
+            word_feats[:word_num, b, :] = word_feats[:word_num, b, :] \
+                                        / word_char_num[:word_num, b].unsqueeze(1) # broadcast the hidden dimension
 
+        # Get word-level masks.
         masks = torch.zeros(max_word_num, B, dtype=torch.bool, device=char_feats.device)
         for b in range(B):
             masks[:word_nums[b], b] = 1.
+            # the rest of the mask are paddings, and they are already 0s in the initialization
 
         return word_feats, masks
     

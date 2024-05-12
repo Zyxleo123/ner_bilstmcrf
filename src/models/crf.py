@@ -15,72 +15,75 @@ class CRF(nn.Module):
         self.transitions = nn.Parameter(torch.randn(self.K, self.K))
         # self.freeze_transitions()
     
-    def _cal_partition(self, feats, masks):
+    def _cal_partition(self, emit_scores, masks):
         L, B = masks.shape
-        init_alphas = torch.full((B, self.K), -10000., device=feats.device)
-        init_alphas[:, self.label_to_idx[START_LABEL]] = 0.
-        # Wrap in a variable so that we will get automatic backprop
-        forward_var = init_alphas
+        # \alpha[0, k] = start\_score[k] \\
+        forward_var_0 = torch.full((B, self.K), -10000., device=emit_scores.device)
+        forward_var_0[:, self.label_to_idx[START_LABEL]] = 0.
+        forward_var_t = forward_var_0
         # DP loop
-        for t, feat in enumerate(feats):
-            forward_var_t = []  # The forward tensors at this timestep; B x K
-            # populate the next forward_var iteratively in K steps
-            for next_label in range(self.K): # calculate each path from the previous label to the next label and sum
-                emit_score = feat[range(B), next_label].view(-1, 1).expand(B, self.K) # B -> B x K
-                trans_score = self.transitions[next_label].view(1, -1).expand(B, self.K) # K -> B x K
-                next_label_var = forward_var + (emit_score + trans_score) * masks[t].view(-1, 1) # B x K
-                # just propagate the forward_var if the mask is 0; else sum the path scores
-                next_label_var = torch.where(masks[t].bool(), log_sum_exp(next_label_var), forward_var[:, next_label]) # B
-                forward_var_t.append(next_label_var)
-            forward_var = torch.stack(forward_var_t, dim=1) # B x K
-        terminal_var = forward_var + self.transitions[self.label_to_idx[STOP_LABEL]]
-        alpha = log_sum_exp(terminal_var)
-        return alpha
+        for t, emit_score in enumerate(emit_scores):
+            forward_var_t_k = []  # The working forward variable at this timestep; B x K
+            # Populate the next forward_var iteratively in K steps
+            for k in range(self.K): # \alpha[t, k] = Logsumexp_{k'}(\alpha[t-1, k'] + emit\_score_t[k] + transition\_score[k', k])
+                emit_score = emit_score[range(B), k].view(-1, 1).expand(B, self.K) # B -> B x K
+                trans_score = self.transitions[k].view(1, -1).expand(B, self.K) # K -> B x K
+                next_label_var = forward_var_t + (emit_score + trans_score) * masks[t].view(-1, 1) # B x K
+                # Just keep the previous forward_var if the mask is 0; else sum the path scores
+                next_label_var = torch.where(masks[t].bool(), log_sum_exp(next_label_var), forward_var_t[:, k]) # B
+                forward_var_t_k.append(next_label_var)
+            forward_var_t = torch.stack(forward_var_t_k, dim=1) # B x K
+        forward_var_T = forward_var_t + self.transitions[self.label_to_idx[STOP_LABEL]]
+        partition = log_sum_exp(forward_var_T)
+        return partition
     
-    def _cal_sent_score(self, feats, labels, masks):
+    def _cal_sent_score(self, emit_scores, labels, masks):
         L, B = masks.shape
-        assert feats.shape == (L, B, self.K)
+        assert emit_scores.shape == (L, B, self.K)
         assert labels.shape == (L, B)
-        score = torch.zeros(B, device=feats.device) # B
-        labels = torch.cat([torch.full((1, B), self.label_to_idx[START_LABEL], dtype=torch.long, device=feats.device), labels], dim=0) # (L + 1) x B
-        for t, feat in enumerate(feats):
-            score += (self.transitions[labels[t + 1], labels[t]] + feat[range(B), labels[t + 1]]) * masks[t] # (B + B) x B -> B
-        # add the last transition to STOP_LABEL
+        score = torch.zeros(B, device=emit_scores.device) # B
+        labels = torch.cat([torch.full((1, B), self.label_to_idx[START_LABEL], dtype=torch.long, device=emit_scores.device),
+                            labels], dim=0) # Add a [Start] tag; (L + 1) x B
+        for t, emit_score in enumerate(emit_scores):
+            score += (self.transitions[labels[t + 1], labels[t]] + emit_score[range(B), labels[t + 1]]) * masks[t] # (B + B) x B -> B
+        # Add the last transition to STOP_LABEL
         score += self.transitions[self.label_to_idx[STOP_LABEL], labels[torch.sum(masks, dim=0).long(), range(B)]]
         return score
 
-    def _predict(self, feats, masks):
+    def _predict(self, emit_scores, masks):
         L, B = masks.shape
-        assert feats.shape == (L, B, self.K)
+        assert emit_scores.shape == (L, B, self.K)
         bptrs = []
-        # Initialize the viterbi variables in log space
-        init_vvars = torch.full((B, self.K), -100000., device=feats.device)
-        init_vvars[:, self.label_to_idx[START_LABEL]] = 0. # B x K
+        # \alpha[0, k] = start\_score[k] \\
+        forward_var_0 = torch.full((B, self.K), -10000., device=emit_scores.device)
+        forward_var_0[:, self.label_to_idx[START_LABEL]] = 0. # B x K
+        forward_var_t = forward_var_0
+
         # DP loop
-        forward_var = init_vvars
-        for t, feat in enumerate(feats):
+        for t, emit_score in enumerate(emit_scores):
             bptrs_t = []
-            forward_var_t = []
-            # populate the next forward_var iteratively in K steps; delay adding emission score to the end of the loop
+            forward_var_t_k = []
+            # Populate the next forward_var iteratively in K steps
             for next_label in range(self.K):
-                next_label_var = forward_var + self.transitions[next_label] # B x K
+                # Don't add emission score here since it's the same for all paths and doesn't affect the argmax
+                next_label_var = forward_var_t + self.transitions[next_label] # B x K
                 assert next_label_var.shape == (B, self.K)
                 best_label_ids = torch.argmax(next_label_var, dim=1) # B
                 assert best_label_ids.shape == (B,)
-                next_label_var = torch.where(masks[t].bool(), next_label_var[range(B), best_label_ids], forward_var[:, next_label]) # B
+                next_label_var = torch.where(masks[t].bool(), next_label_var[range(B), best_label_ids], forward_var_t[:, next_label]) # B
                 bptrs_t.append(best_label_ids)
-                forward_var_t.append(next_label_var)
-                assert bptrs_t[-1].shape == forward_var_t[-1].shape == (B,)
+                forward_var_t_k.append(next_label_var)
+                assert bptrs_t[-1].shape == forward_var_t_k[-1].shape == (B,)
             # Now add in the emission scores, and assign forward_var to the set of viterbi variables we just computed
-            forward_var = torch.stack(forward_var_t, dim=1) + feat * masks[t].view(-1, 1) # B x K
+            forward_var_t = torch.stack(forward_var_t_k, dim=1) + emit_score * masks[t].view(-1, 1) # B x K
             bptrs.append(torch.stack(bptrs_t, dim=1)) # B x K
 
         bptrs = torch.stack(bptrs, dim=0) # L x B x K
         assert bptrs.shape == (L, B, self.K)
         # Transition to STOP_LABEL
-        terminal_var = forward_var + self.transitions[self.label_to_idx[STOP_LABEL]] # B x K
-        best_label_ids = torch.argmax(terminal_var, dim=1) # B
-        path_scores = terminal_var[range(B), best_label_ids]
+        forward_var_T = forward_var_t + self.transitions[self.label_to_idx[STOP_LABEL]] # B x K
+        best_label_ids = torch.argmax(forward_var_T, dim=1) # B
+        path_scores = forward_var_T[range(B), best_label_ids]
         
         best_paths = []
         for b in range(B):

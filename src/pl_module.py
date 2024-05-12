@@ -1,21 +1,25 @@
 import torch
 import time
 from pytorch_lightning import LightningModule
+from transformers import get_linear_schedule_with_warmup
 from .models import BiLSTMCRF
 from .variable import LABELS, IDX_TO_LABEL, get_run_name
 
 class LightningBiLSTMCRF(LightningModule):
-    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim, char_level,
-                bert_lr, lstm_lr, crf_lr, optimizer, anneal,
-                pretrained_model_name, freeze_bert):
+    def __init__(self, label_to_idx, lstm_layer_num, lstm_state_dim,
+                bert_lr, lstm_lr, crf_lr, optimizer, scheduler,
+                pretrained_model_name, freeze_bert,
+                epochs, steps_per_epoch):
         super(LightningBiLSTMCRF, self).__init__()
-        self.model = BiLSTMCRF(label_to_idx, lstm_layer_num, lstm_state_dim, char_level, pretrained_model_name, freeze_bert)
+        self.model = BiLSTMCRF(label_to_idx, lstm_layer_num, lstm_state_dim, pretrained_model_name, freeze_bert)
         self.bert_lr = bert_lr
         self.lstm_lr = lstm_lr
         self.crf_lr = crf_lr
-        self.char_level = char_level
         self.optimizer = optimizer
-        self.anneal = anneal
+        self.scheduler = scheduler
+        self.freeze_bert = freeze_bert
+        self.epochs = epochs
+        self.steps_per_epoch = steps_per_epoch
         self.val_gts = []
         self.val_preds = []
         self.val_losses = []
@@ -37,12 +41,8 @@ class LightningBiLSTMCRF(LightningModule):
         input_ids, attention_mask, word_ids, gt = batch['input_ids'], batch['attention_mask'], batch['word_ids'], batch['labels']
         pred = self.model.predict(input_ids=input_ids, attention_mask=attention_mask, word_ids=word_ids)
         loss = self.model.calculate_loss(input_ids=input_ids, attention_mask=attention_mask, word_ids=word_ids, labels=gt)
-        if not self.char_level:
-            pred = [[IDX_TO_LABEL[int(y)] for y in b] for b in pred]
-            gt = [[IDX_TO_LABEL[int(y)] for y in b] for b in gt]
-        else:
-            pred = [[IDX_TO_LABEL[int(y)] for y in b[1:-1]] for b in pred]
-            gt = [[IDX_TO_LABEL[int(y)] for y in b[1:-1]] for b in gt]
+        pred = [[IDX_TO_LABEL[int(y)] for y in b] for b in pred]
+        gt = [[IDX_TO_LABEL[int(y)] for y in b] for b in gt]
         self.val_gts.extend(gt)
         self.val_preds.extend(pred)
         self.val_losses.append(loss.item())
@@ -100,12 +100,19 @@ class LightningBiLSTMCRF(LightningModule):
                 {'params': crf_params, 'lr': self.crf_lr}, 
                 {'params': lstm_params, 'lr': self.lstm_lr},
             ], lr=self.lstm_lr, **momentum)
-        if self.anneal:
+        if self.scheduler == 'anneal':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1)
             return [optimizer], [scheduler]
+        elif self.scheduler == 'onecycle':
+            if not self.freeze_bert:
+                raise ValueError('Cannot do one cycle lr scheduler when not freezing bert')
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.lstm_lr, epochs=self.epochs, steps_per_epoch=self.steps_per_epoch)
+            return [optimizer], [scheduler]
+        elif self.scheduler == 'linear':
+            scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=self.epochs*self.steps_per_epoch)
+            return [optimizer], [scheduler]
         else:
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=10, verbose=True)
-            return [optimizer],[{'scheduler': scheduler, 'monitor': 'val_loss'}] 
+            return optimizer
 
 def classification_report(gt, pred, label_set):
     # return a dict that report: 

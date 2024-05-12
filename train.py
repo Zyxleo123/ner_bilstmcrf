@@ -25,12 +25,6 @@ def main(hparams):
     print("Initializing tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(hparams.pretrained_model_name)
 
-    print("Initializing model...")
-    model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_layer_num, hparams.lstm_state_dim, 
-                            bert_lr=hparams.bert_lr, lstm_lr=hparams.lstm_lr, crf_lr=hparams.crf_lr,
-                            char_level=hparams.char_level, optimizer=hparams.optimizer, anneal=hparams.anneal,
-                            pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0)
-
     print("Initializing dataset...")
     train_dataset_name = "toy" if hparams.toy else "train"
     train_dataset = NERDataset(train_dataset_name, LABEL_TO_IDX, upsample=hparams.upsample)
@@ -49,33 +43,26 @@ def main(hparams):
     def tokenize(example):
         encoding = tokenizer(example["text"], is_split_into_words=True)
         encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['labels']))]
-        if not hparams.char_level:
-            encoding['labels'] = example['labels']
-        else:
-            # align labels with word_ids
-            labels = example['labels']
-            word_ids = encoding['word_ids']
-            new_labels = []
-            for b in range(len(labels)):
-                new_label = []
-                for w in word_ids[b]:
-                    if w is not None:
-                        new_label.append(labels[b][w])
-                    else:
-                        new_label.append('O')
-                new_labels.append(new_label)
-            encoding['labels'] = new_labels
+        encoding['labels'] = example['labels']
         return encoding
 
     train_dataset = train_dataset.map(tokenize, batched=True, batch_size=hparams.batch_size, remove_columns=["text"])
     val_dataset = val_dataset.map(tokenize, batched=True, batch_size=hparams.batch_size, remove_columns=["text"])
-
-    print("Training model...")
-    run_name = get_run_name(hparams)
     collator = NERDataCollator(tokenizer=tokenizer)
     train_loader = DataLoader(train_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47, shuffle=True)
     val_loader = DataLoader(val_dataset, collate_fn=collator, batch_size=hparams.batch_size, num_workers=47)
-    logger = TensorBoardLogger("tb_logs2" if hparams.search else "run", name=run_name)
+
+    print("Initializing model...")
+    model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_layer_num, hparams.lstm_state_dim, 
+                            bert_lr=hparams.bert_lr, lstm_lr=hparams.lstm_lr, crf_lr=hparams.crf_lr,
+                            optimizer=hparams.optimizer, scheduler=hparams.scheduler,
+                            pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0,
+                            epochs=hparams.epoch, steps_per_epoch=len(train_loader))
+
+
+    print("Training model...")
+    run_name = get_run_name(hparams)
+    logger = TensorBoardLogger("tb_logs3" if hparams.search else "run", name=run_name)
     if not hparams.search:
         on_val_loss = ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=3, dirpath=f"best_models/{run_name}", filename="{epoch}-{val_loss:.4f}-{val_f1:.4f}")
         on_val_f1 = ModelCheckpoint(monitor="val_f1", mode="max", save_top_k=3, dirpath=f"best_models/{run_name}", filename="{epoch}-{val_loss:.4f}-{val_f1:.4f}")
@@ -94,11 +81,10 @@ if __name__ == "__main__":
     parser.add_argument("--lstm_state_dim", default=256, type=int)
     parser.add_argument("--lstm_layer_num", default=1, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--char_level", default=False, action="store_true")
     parser.add_argument("--optimizer", default="adam", type=str)
     parser.add_argument("--pretrained_model_name", default="bert-base-chinese", type=str)
     parser.add_argument("--search", default=False, action="store_true")
-    parser.add_argument("--anneal", default=False, action="store_true")
+    parser.add_argument("--scheduler", default="none", type=str)
     parser.add_argument("--upsample", default=False, action="store_true")
     args = parser.parse_args()
     main(args)

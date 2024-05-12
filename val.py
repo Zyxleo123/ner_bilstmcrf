@@ -29,22 +29,7 @@ def test(path):
     def tokenize(example):
         encoding = tokenizer(example["text"], is_split_into_words=True)
         encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['text']))]
-        if not model.hparams.char_level:
-            encoding['labels'] = example['labels']
-        else:
-            # align labels with word_ids
-            labels = example['labels']
-            word_ids = encoding['word_ids']
-            new_labels = []
-            for b in range(len(labels)):
-                new_label = []
-                for w in word_ids[b]:
-                    if w is not None:
-                        new_label.append(labels[b][w])
-                    else:
-                        new_label.append('O')
-                new_labels.append(new_label)
-            encoding['labels'] = new_labels
+        encoding['labels'] = example['labels']
         return encoding
     val_dataset = val_dataset.map(tokenize, batched=True, remove_columns=["text"], batch_size=32)
 

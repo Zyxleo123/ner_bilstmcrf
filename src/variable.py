@@ -31,5 +31,5 @@ def get_run_name(hparams):
     run_name += f"_lstmlr={hparams.lstm_lr}"
     run_name += f"_opt={hparams.optimizer}"
     run_name += f"_dim={hparams.lstm_state_dim}"
-    run_name += f"_anneal={hparams.anneal}"
+    run_name += f"_scheduler={hparams.scheduler}"
     return run_name
