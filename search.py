@@ -31,11 +31,11 @@ class Hparams:
     optimizer: str
     lstm_state_dim: int
     bert_lr: float
-    lstm_lr: float
+    lr: float
     scheduler: str
 
 def vast():
-    lstm_lr = [1e-3, 5e-4, 5e-3]
+    lr = [1e-3, 5e-4, 5e-3]
     bert_lr = [LR_FREEZE]
     optimizer = ['adamw']
     pretrained_model_names = [
@@ -43,7 +43,7 @@ def vast():
             ]
     lstm_state_dims = [1024, 512, 256]
     scheduler = ['linear', 'anneal', 'onecycle', 'none']
-    params = product(pretrained_model_names, optimizer, bert_lr, lstm_state_dims, lstm_lr, scheduler)
+    params = product(pretrained_model_names, optimizer, bert_lr, lstm_state_dims, lr, scheduler)
 
     for pretrained_model_name, opt, b_lr, lstm_state_dim, lr, scheduler in params:
         python_command = deepcopy(command)
@@ -56,7 +56,7 @@ def vast():
                 python_command.extend(["--bert_lr", str(MODEL_LR['bert'])])
             else:
                 python_command.extend(["--bert_lr", str(MODEL_LR['ernie'])])
-        python_command.extend(["--lstm_lr", str(lr)])
+        python_command.extend(["--lr", str(lr)])
         python_command.extend(["--pretrained_model_name", pretrained_model_name])
         python_command.extend(["--scheduler", scheduler])
         

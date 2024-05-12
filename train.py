@@ -55,14 +55,14 @@ def main(hparams):
 
     print("Initializing model...")
     model = LightningBiLSTMCRF(LABEL_TO_IDX, hparams.lstm_state_dim, 
-                            bert_lr=hparams.bert_lr, lstm_lr=hparams.lstm_lr,
+                            bert_lr=hparams.bert_lr, lr=hparams.lr,
                             optimizer=hparams.optimizer, scheduler=hparams.scheduler,
                             pretrained_model_name=hparams.pretrained_model_name, freeze_bert=hparams.bert_lr==0.0,
                             epochs=hparams.epoch, steps_per_epoch=len(train_loader))
 
 
     print("Training model...")
-    run_name = get_run_name(hparams)
+    run_name = get_run_name(hparams) if hparams.run_name is None else hparams.run_name
     logger = TensorBoardLogger("tb_logs3" if hparams.search else "run", name=run_name)
     if not hparams.search:
         on_val_loss = ModelCheckpoint(monitor="val_loss", mode="min", save_top_k=3, dirpath=f"best_models/{run_name}", filename="{epoch}-{val_loss:.4f}-{val_f1:.4f}")
@@ -73,17 +73,18 @@ def main(hparams):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument("--search", default=False, action="store_true")
+    parser.add_argument("--run_name", default=None, type=str)
     parser.add_argument("--fast_dev_run", default=False, action="store_true")
     parser.add_argument("--toy", default=False, action="store_true")
-    parser.add_argument("--epoch", default=100, type=int)
-    parser.add_argument("--bert_lr", default=1e-2, type=float, help="Seperate learning rate for bert model; 0.0 means freeze bert model")
-    parser.add_argument("--lstm_lr", default=1e-2, type=float)
-    parser.add_argument("--lstm_state_dim", default=256, type=int)
-    parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--optimizer", default="adam", type=str)
-    parser.add_argument("--pretrained_model_name", default="bert-base-chinese", type=str)
-    parser.add_argument("--search", default=False, action="store_true")
-    parser.add_argument("--scheduler", default="none", type=str)
     parser.add_argument("--upsample", default=False, action="store_true")
+    parser.add_argument("--epoch", default=None, type=int)
+    parser.add_argument("--batch_size", default=None, type=int)
+    parser.add_argument("--bert_lr", default=None, type=float, help="Seperate learning rate for bert model; 0.0 means freeze bert model")
+    parser.add_argument("--lr", default=None, type=float)
+    parser.add_argument("--optimizer", default=None, type=str)
+    parser.add_argument("--scheduler", default=None, type=str)
+    parser.add_argument("--pretrained_model_name", default=None, type=str)
+    parser.add_argument("--lstm_state_dim", default=None, type=int)
     args = parser.parse_args()
     main(args)

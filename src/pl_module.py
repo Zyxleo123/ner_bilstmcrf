@@ -7,13 +7,13 @@ from .variable import LABELS, IDX_TO_LABEL, get_run_name
 
 class LightningBiLSTMCRF(LightningModule):
     def __init__(self, label_to_idx, lstm_state_dim,
-                bert_lr, lstm_lr, optimizer, scheduler,
+                bert_lr, lr, optimizer, scheduler,
                 pretrained_model_name, freeze_bert,
                 epochs, steps_per_epoch):
         super(LightningBiLSTMCRF, self).__init__()
         self.model = BiLSTMCRF(label_to_idx, lstm_state_dim, pretrained_model_name, freeze_bert)
         self.bert_lr = bert_lr
-        self.lstm_lr = lstm_lr
+        self.lr = lr
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.freeze_bert = freeze_bert
@@ -89,20 +89,18 @@ class LightningBiLSTMCRF(LightningModule):
         momentum = {'momentum': 0.9} if self.optimizer == 'sgd' else {}
         if self.bert_lr == 0.:
             optimizer = optimizer_type([
-                {'params': other_params, 'lr': self.lstm_lr},
-            ], lr=self.lstm_lr, **momentum)
+                {'params': other_params, 'lr': self.lr},
+            ], lr=self.lr, **momentum)
         else:
             optimizer = optimizer_type([
                 {'params': bert_params, 'lr': self.bert_lr},
-                {'params': other_params, 'lr': self.lstm_lr},
-            ], lr=self.lstm_lr, **momentum)
+                {'params': other_params, 'lr': self.lr},
+            ], lr=self.lr, **momentum)
         if self.scheduler == 'anneal':
             scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=self.epochs//5)
             return [optimizer], [scheduler]
         elif self.scheduler == 'onecycle':
-            if not self.freeze_bert:
-                raise ValueError('Cannot do one cycle lr scheduler when not freezing bert')
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.lstm_lr, epochs=self.epochs, steps_per_epoch=self.steps_per_epoch)
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.lr, epochs=self.epochs, steps_per_epoch=self.steps_per_epoch)
             return [optimizer], [scheduler]
         elif self.scheduler == 'linear':
             scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=self.epochs*self.steps_per_epoch)

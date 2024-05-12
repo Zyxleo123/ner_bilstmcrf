@@ -28,7 +28,7 @@ ENTITY_SUB_TYPE = ['GPE', 'LOC', 'ORG', 'PER']
 def get_run_name(hparams):
     run_name = hparams.pretrained_model_name.split("/")[-1]
     run_name += f"_bertlr={hparams.bert_lr}"
-    run_name += f"_lstmlr={hparams.lstm_lr}"
+    run_name += f"_lstmlr={hparams.lr}"
     run_name += f"_opt={hparams.optimizer}"
     run_name += f"_dim={hparams.lstm_state_dim}"
     run_name += f"_scheduler={hparams.scheduler}"
