@@ -43,7 +43,8 @@ def main(hparams):
     def tokenize(example):
         encoding = tokenizer(example["text"], is_split_into_words=True)
         encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['labels']))]
-        encoding['labels'] = example['labels']
+        encoding['word_ids'] = [list(map(lambda x: -1 if x is None else x, word_id)) for word_id in encoding['word_ids']]
+        encoding['labels'] = [[LABEL_TO_IDX[y] for y in b] for b in example['labels']]
         return encoding
 
     train_dataset = train_dataset.map(tokenize, batched=True, batch_size=hparams.batch_size, remove_columns=["text"])

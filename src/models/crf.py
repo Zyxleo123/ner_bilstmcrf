@@ -83,7 +83,7 @@ class CRF(nn.Module):
         # Transition to STOP_LABEL
         forward_var_T = forward_var_t + self.transitions[self.label_to_idx[STOP_LABEL]] # B x K
         best_label_ids = torch.argmax(forward_var_T, dim=1) # B
-        path_scores = forward_var_T[range(B), best_label_ids]
+        best_scores = forward_var_T[range(B), best_label_ids]
         
         best_paths = []
         for b in range(B):
@@ -100,7 +100,7 @@ class CRF(nn.Module):
             best_path.reverse()
             assert len(best_path) == torch.sum(masks[:, b]).long()
             best_paths.append(best_path)
-        return path_scores, best_paths
+        return best_scores, best_paths
 
     def freeze_transitions(self):
         # freeze from S-xxx to M-*/E-*

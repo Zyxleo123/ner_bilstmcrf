@@ -6,39 +6,52 @@
 
 ### 1.1 模型
 
+#### 总架构
 
-1. 总架构
+> Bert-like model(as embedding) -> BiLSTM -> 字符到词语转换 -> Emit score映射层(BiLSTM hidden size -> #Label) -> CRF
 
-    **Bert-like model(as embedding) -> BiLSTM -> 字符到词语转换 -> Emit score映射层(BiLSTM hidden size -> #Label) -> CRF**
-
-    1. Bert-like model：载入Huggingface的预训练模型，用于生成上下文有关的高质量词向量
-
-    2. BiLSTM：和后面的所有层一样为fine tune的预测头。用于提取适合本次数据集的上下文有关的特征。之所以不去掉这一层，是因为否则需要把task-specific的特征提取放到Bert-like model中，但是bert-like model的参数量太大相较数据量，不适合fine-tuning。
-
-    3. 字符到词语转换：用于将BiLSTM的输出映射到每个词语的输出。这一层将[<CLS>, subword_embedding_1_1, subword_embedding_1_2, subword_embedding_2_1, ..., subword_embedding_n_3, <SEP>, <PAD>, <PAD>, ..., <PAD>]映射到[word_embedding_1, word_embedding_2, ..., word_embedding_n]。目的是使得label和feature的长度对齐，这样才可以用crf直接计算loss，也可以viterbi直接解码。
-
-    4. Emit score映射层：将词语级的feature映射为label的emit score。比如BiLSTM的hidden size为768，label的数量为10，那么这一层就是一个768->10的全连接层。
-
-    5. CRF：用于解决标签之间的依赖关系。计算loss时，不像softmax那样直接计算每个label的概率，而是计算整个序列给出emit score的条件概率。解码时，用viterbi算法输出一条条件概率最大的label序列。
-
-    Bert-like model，BiLSTM，映射层都是直接调用库的，下面主要介绍字符到词语转换和CRF。
-
-2. 字符到词语转换(`_char_feat_to_word_feat`)
-
-    1. 输入：
-        `char_feats`(char_seq_len x batch_size x hidden_size): 要转换的字符集特征；
-        `word_id`(batch_size x char_seq_len)：这是Huggingface的fast tokenizer的输出之一。其将subword在句子中的位置映射到分词前的token在句子中的位置，由于special token本来不出现在句子里，所以映射到None。由于None不能转为tensor，预处理时将None转为-1；
-        attention_mask(batch_size x char_seq_len)：将<PAD>映射为0，其他映射为1；
-
-    2. 输出：
-        `word_feats`(word_seq_len x batch_size x hidden_size)：由于CRF根据时间维度进行动态规划和计算句子分数等，所以这里将batch_size和seq_len的维度调换。
-        `masks`(word_seq_len x batch_size)：标记哪些位置是真实的词语，哪些是padding的。
-
-    3. 思路：
-        由于这个层在Bert-like model后，所以需要考虑Bert-like model的特殊字符。由于特殊字符不对应任何label，所以直接去掉它们的特征，实现时使用切片索引获取非特殊字符的特征，这一步需要借助`attention_mask`的信息。然后根据`word_id`累和subwords得到word的特征，使用了`Tensor._index_add`方法；最后取平均，取平均需要先获得每个词语由多少subword组成，这里使用了`torch.bincount`。
+1. **Bert-like model：**
     
-    4. 代码
-        具体实现见如下代码，其中包括了一些例子和更详细的解释：
+    载入Huggingface的预训练模型，用于生成上下文有关的高质量词向量
+
+2. **BiLSTM：**
+
+    和后面的所有层一样为fine tune的预测头。用于提取适合本次数据集的上下文有关的特征。之所以不去掉这一层，是因为否则需要把task-specific的特征提取放到Bert-like model中，但是bert-like model的参数量太大相较数据量，不适合fine-tuning。
+
+3. **字符到词语转换：**
+
+    用于将BiLSTM的输出映射到每个词语的输出。这一层将[<CLS>, subword_embedding_1_1, subword_embedding_1_2, subword_embedding_2_1, ..., subword_embedding_n_3, <SEP>, <PAD>, <PAD>, ..., <PAD>]映射到[word_embedding_1, word_embedding_2, ..., word_embedding_n]。目的是使得label和feature的长度对齐，这样才可以用crf直接计算loss，也可以viterbi直接解码。
+
+4. **Emit score映射层：**
+
+    将词语级的feature映射为label的emit score。比如BiLSTM的hidden size为768，label的数量为10，那么这一层就是一个768->10的全连接层。
+
+5. **CRF：**
+
+    用于解决标签之间的依赖关系。计算loss时，不像softmax那样直接计算每个label的概率，而是计算整个序列给出emit score的条件概率。解码时，用viterbi算法输出一条条件概率最大的label序列。
+
+Bert-like model，BiLSTM，映射层都是直接调用库的，下面主要介绍字符到词语转换和CRF。
+
+#### 字符到词语转换(`_char_feat_to_word_feat`)
+
+1. **输入：**
+
+    `char_feats`(char_seq_len x batch_size x hidden_size): 要转换的字符集特征；
+    `word_id`(batch_size x char_seq_len)：这是Huggingface的fast tokenizer的输出之一。其将subword在句子中的位置映射到分词前的token在句子中的位置，由于special token本来不出现在句子里，所以映射到None。由于None不能转为tensor，预处理时将None转为-1；
+    `attention_mask`(batch_size x char_seq_len)：将<PAD>映射为0，其他映射为1；
+
+2. **输出：**
+
+    `word_feats`(word_seq_len x batch_size x hidden_size)：由于CRF根据时间维度进行动态规划和计算句子分数等，所以这里将batch_size和seq_len的维度调换。
+    `masks`(word_seq_len x batch_size)：由于不同batch含有词语个数不同，用masks标记哪些位置是真实的词语，哪些是padding的。
+
+3. **思路：**
+
+    由于这个层在Bert-like model后，所以需要考虑Bert-like model的特殊字符。由于特殊字符不对应任何label，所以直接去掉它们的特征，实现时使用切片索引获取非特殊字符的特征，这一步需要借助`attention_mask`的信息。然后根据`word_id`累和subwords得到word的特征，使用了`Tensor._index_add`方法；最后取平均，取平均需要先获得每个词语由多少subword组成，这里使用了`torch.bincount`。
+    
+4. **代码**
+
+    具体实现见如下代码，其中包括了一些例子和更详细的解释：
 
     ```python
     def _char_feat_to_word_feat(self, char_feats, word_ids, attention_mask):
@@ -85,49 +98,71 @@
         return word_feats, masks
     ```
 
-3. CRF
+    和Bert-like model, projection放在一起，获得CRF的emit scores和word_masks的代码如下：
 
-CRF是一种无向图模型，并且它视input(emit score)为已知，只对hidden states进行建模(即label)。它一般有两个用途: 1. 计算某一个label序列的概率，涉及到计算这个序列的score和partition score；2. 使用viterbi算法获得概率最大（也就是score最大）的序列。
+    ```python
+    def _bilstm(self, input_ids, attention_mask, word_ids):
+        embeds = self.bert_like_model(input_ids, attention_mask=attention_mask).last_hidden_state
+        embeds = embeds.permute(1, 0, 2) # change to time-step first
+        feats, self.state = self.lstm(embeds)
+        feats, word_masks = self._char_feat_to_word_feat(feats, word_ids, attention_mask)
+        emit_scores = self.projection(feats)
+        return emit_scores, word_masks
+    ```
+
+#### CRF
+
+
+- CRF是一种无向图模型，并且它视input(emit score)为已知，只对hidden states进行建模(即label)。它一般有两个用途: 1. 计算某一个label序列的概率，涉及到计算这个序列的score和partition score；2. 使用viterbi算法获得概率最大（也就是score最大）的序列。
 CRF建模的是label之间的依赖关系，所以它的score是由两部分组成的：1. emit score，即不考虑label之间的依赖关系的情况下，词语赋予某个label的的得分；2. transition score，即label之间的转移得分。特别地，我们还可以约束每个label作为起始和终止的得分。CRF的score计算公式如下：
+由于本任务中，只存在类似"B必须转移到相同类型的M或E"的相邻label的约束，所以只用transition matrix建模label间约束是足够的。
 
 $$
 score(y) = \sum_{i=1}^{n} emit\_score_i(y_i) + \sum_{i=1}^{n-1} transition\_score(y_i, y_{i+1}) + start\_score(y_1) + end\_score(y_n)
 $$
-而partition score是对所有可能的label序列的score求和，即：
+
+- 而partition score是对所有可能的label序列的score求和，即：
 
 $$
 partition\_score = \sum_{y \in Y} score(y)
 $$
-于是，label序列的概率就是：
+
+- 于是，label序列的概率就是：
 
 $$
 p(y|x) = \frac{score(y)}{partition\_score}
 $$
 
-实际中，emit score就是projection layer的结果，transition score用一个矩阵表示，这个矩阵要包括start和end的得分。
+- 实际中，emit score就是projection layer的结果，transition score用一个矩阵表示，这个矩阵要包括start和end的得分。
 
-3.1 计算某一个label序列的得分(`CRF._cal_sent_score`)
+- 计算某一个label序列的得分(`CRF._cal_sent_score`)
 
-1. 输入：
+1. **输入：**
+
+
     `emit_scores`(seq_len x batch_size x label_num)：每个词语的emit score，代表了不考虑label之间的依赖关系的情况下，词语赋予某个label的得分；
     `labels`(seq_len x batch_size)：每个词语的label；
     `masks`(seq_len x batch_size)：标记哪些位置是真实的词语，哪些是padding的。
 
-2. 输出：
+2. **输出：**
+
+
     `score`(batch_size)：每个句子的score。
 
-3. 思路：
+3. **思路：**
+
+
     按照上述score的公式迭代计算即可。要注意不去加转移到padding的label的得分，也不加padding内部的转移得分，也不加padding的emit score，这可以用masks来实现。另外，因为padding的存在，结束得分放在最后处理。
 
-4. 代码
+4. **代码**
+
+
     具体实现见如下代码：
 
 ```python
 
     def _cal_sent_score(self, emit_scores, labels, masks):
         L, B = masks.shape
-        assert emit_scores.shape == (L, B, self.K)
-        assert labels.shape == (L, B)
         score = torch.zeros(B, device=emit_scores.device) # B
         labels = torch.cat([torch.full((1, B), self.label_to_idx[START_LABEL], dtype=torch.long, device=emit_scores.device),
                             labels], dim=0) # Add a [Start] tag; (L + 1) x B
@@ -138,34 +173,44 @@ $$
         return score
 ```
 
-3.2 计算所有可能label序列的得分总和(`CRF._cal_partition_score`)
+- 计算所有可能label序列的得分总和(`CRF._cal_partition_score`)
 
-1. 输入：
+1. **输入：**
+
+
     `emit_scores`(seq_len x batch_size x label_num)：每个词语的emit score，代表了不考虑label之间的依赖关系的情况下，词语赋予某个label的得分；
     `masks`(seq_len x batch_size)：标记哪些位置是真实的词语，哪些是padding的。
 
-2. 输出：
+2. **输出：**
+
+
     `partition_score`(batch_size)：每个句子的partition score。
 
-3. 思路：
+3. **思路：**
+
+
     如果不用动态规划，那么有$K^T$种可能的label序列，其中K为标签数量，T为序列长度。这是无法有效计算的。但是可以利用动态规划的思想：
     我们将原问题："计算所有label序列的得分总和"，先变为"计算时间T时为label k的所有序列的得分总和"，后者的结果用logsumexp(此函数将代表一系列不相交事件的对数概率，也就是分数先求指数变为一系列概率，再求这些不相交事件的概率求和，最后取对数返回对数空间)可以转化为前者的结果。而"计算时间T时为label k的所有序列的得分总和"可以用动态规划解决。我们定义一个矩阵`alpha`，其中`alpha[t, k]`表示时间t时为label k的所有序列的得分总和。当子问题`alpha[t-1, k']`对于任何$k'$已经解决时，我们可以用如下公式解决子问题`alpha[t, k]`：
 
-$$
-\alpha[0, k] = start\_score[k] \\
-\alpha[t, k] = Logsumexp_{k'}(\alpha[t-1, k'] + emit\_score_t[k] + transition\_score[k', k]) \   (t > 0, t < T) \\
-\alpha[T, k] = Logsumexp_{k'}(\alpha[T-1, k'] + end\_score[k'])
-$$
-partition score如下：
-$$
-partition\_score = Logsumexp_k(\alpha[T, k])
-$$
+    $$
+    \alpha[0, k] = start\_score[k] \\
+    \alpha[t, k] = Logsumexp_{k'}(\alpha[t-1, k'] + emit\_score_t[k] + transition\_score[k', k]) \   (t > 0, t < T) \\
+    \alpha[T, k] = Logsumexp_{k'}(\alpha[T-1, k'] + end\_score[k'])
+    $$
 
-这样只需要$KT$个循环，就可以得到partition score。循环内部的计算是张量运算，所以效率很高。
-同样地，我们需要注意padding的存在。在这里，我们要保证padding的时间步t保持上一个时间步的`alpha[t-1, k']`不变（对所有$k'$）。且结束得分要放在最后处理。
+    partition score如下：
 
-4. 代码
-    具体实现见如下代码，其中变量名和代码都和上述公式对应：
+    $$
+    partition\_score = Logsumexp_k(\alpha[T, k])
+    $$
+
+    这样只需要$KT$个循环，就可以得到partition score。循环内部的计算是张量运算，所以效率很高。
+    同样地，我们需要注意padding的存在。在这里，我们要保证padding的时间步t保持上一个时间步的`alpha[t-1, k']`不变（对所有$k'$）。且结束得分要放在最后处理。
+
+4. **代码**
+
+
+    具体实现见如下代码。实现时，并不会真正存储一整个矩阵的子问题解，毕竟我们只需要上一个时间步的解。于是只需要一个向量即可（见`forward_var_t`）。剩余部分都和上述公式一致。
 
     ```python
     def _cal_partition(self, emit_scores, masks):
@@ -191,32 +236,280 @@ $$
         return partition
     ```
 
-3.3 计算loss(`BiLSTMCRF.calculate_loss`(已废弃))
+    将CRF放在整个模型当中，计算loss时，需要计算score和partition score，然后只需要将上述两个函数的结果相减即可。由于的目标是最大化概率，所以我们要最大化score，也就是最小化负的score。所以loss是负的score。还有，要对batch_size取平均。
 
-只需要将上述两个函数的结果相减即可。注意，由于我们的目标是最大化概率，所以我们要最大化score，也就是最小化负的score。所以我们的loss是负的score。还有，要对batch_size取平均。
-
-代码如下：
-
-```python
-def calculate_loss(self, input_ids, attention_mask, word_ids, labels):
+    ```python
+    def calculate_loss(self, input_ids, attention_mask, word_ids, labels):
         labels = labels.T
         emit_score, word_masks = self._bilstm(input_ids, attention_mask, word_ids)
         score = self._cal_sent_score(emit_score, labels, word_masks)
         partition = self._cal_partition(emit_score, word_masks)
         loss = partition - score
         return loss.mean(dim=1)
+    ```
+
+- 解码(`CRF.predict`)
+
+1. **输入：**
+
+
+    `emit_scores`(seq_len x batch_size x label_num)：每个词语的emit score，代表了不考虑label之间的依赖关系的情况下，词语赋予某个label的得分；
+    `masks`(seq_len x batch_size)：标记哪些位置是真实的词语，哪些是padding的。
+
+2. **输出：**
+
+
+    `best_paths`(seq_len x batch_size)：每个batch的最优序列。
+    `best_scores`(batch_size)：每个batch的最优序列的得分。
+
+3. **思路**
+
+
+    解码的目标是找到概率最大的label序列。这个问题和计算partition score的问题是一样的，只是我们要找到最大的score对应的序列，而不是求和。我们可以用viterbi算法解决这个问题。viterbi算法和前述的动态规划结构完全一致，只是把logsumexp换为max，然后需要记录每个子问题的解序列。我们定义一个矩阵`alpha`，其中`alpha[t, k]`表示时间t时为label k的所有序列的最大得分。当子问题`alpha[t-1, k']`对于任何$k'$已经解决时，我们可以用如下公式解决子问题`alpha[t, k]`：
+
+    $$
+    \alpha[0, k] = start\_score[k] \\
+    \alpha[t, k] = Max_{k'}(\alpha[t-1, k'] + emit\_score_t[k] + transition\_score[k', k]) = Max_{k'}(\alpha[t-1, k'] + transition\_score[k', k]) + emit\_score_t[k] \   (t > 0, t < T) \\
+    \alpha[T, k] = Max_{k'}(\alpha[T-1, k'] + end\_score[k'])
+    $$
+
+    至此`best_scores`可以计算。
+
+    由于我们并不是想要最大的score，而是得到最大score对应的label序列，所以我们还需要记录每个子问题的解序列。我们定义一个矩阵`bptrs`(back pointers)，其中`bptrs[t, k]`表示得到时间t时为label k中的所有序列的最大得分的序列的上一个时间步的label。这个矩阵的构建和`alpha`矩阵一样，只是把max换为argmax。最后，我们从最后一个时间步([STOP])开始，根据`bptrs`逐步回溯，然后去掉[START]就可以得到最大score对应的label序列。
+
+4. **代码**
+
+
+    具体实现见如下代码。实现时同样只需要一个向量即可（见`forward_var_t`）；且不用max函数，而是先用argmax得到每个batch的最好前一时间步label的**索引**，然后用这个索引去取得分，这样间接完成max操作。
+
+    ```python
+    def _predict(self, emit_scores, masks):
+        L, B = masks.shape
+        bptrs = []
+        # \alpha[0, k] = start\_score[k] \\
+        forward_var_0 = torch.full((B, self.K), -10000., device=emit_scores.device)
+        forward_var_0[:, self.label_to_idx[START_LABEL]] = 0. # B x K
+        forward_var_t = forward_var_0
+
+        # DP loop
+        for t, emit_score in enumerate(emit_scores):
+            bptrs_t = []
+            forward_var_t_k = []
+            # Populate the next forward_var iteratively in K steps
+            for next_label in range(self.K):
+                # Don't add emission score here since it's the same for all paths and doesn't affect the argmax
+                next_label_var = forward_var_t + self.transitions[next_label] # B x K
+                best_label_ids = torch.argmax(next_label_var, dim=1) # B
+                next_label_var = torch.where(masks[t].bool(), next_label_var[range(B), best_label_ids], forward_var_t[:, next_label]) # B
+                bptrs_t.append(best_label_ids)
+                forward_var_t_k.append(next_label_var)
+            # Now add in the emission scores, and assign forward_var to the set of viterbi variables we just computed
+            forward_var_t = torch.stack(forward_var_t_k, dim=1) + emit_score * masks[t].view(-1, 1) # B x K
+            bptrs.append(torch.stack(bptrs_t, dim=1)) # B x K
+
+        bptrs = torch.stack(bptrs, dim=0) # L x B x K
+        # Transition to STOP_LABEL
+        forward_var_T = forward_var_t + self.transitions[self.label_to_idx[STOP_LABEL]] # B x K
+        best_label_ids = torch.argmax(forward_var_T, dim=1) # B
+        best_scores = forward_var_T[range(B), best_label_ids]
+        
+        best_paths = []
+        for b in range(B):
+            # Follow the back pointers to decode the best path.
+            best_label_id = best_label_ids[b]
+            best_path = [best_label_id]
+            real_L = torch.sum(masks[:, b]).long()
+            for bptrs_t in reversed(bptrs[:real_L, b]):
+                best_label_id = bptrs_t[best_label_id]
+                best_path.append(best_label_id)
+            # Pop off the start label (we dont want to return that to the caller)
+            start = best_path.pop()
+            best_path.reverse()
+            best_paths.append(best_path)
+        return best_scores, best_paths
+    ```
+    
+    将CRF放在整个模型当中，解码时，只需要调用上述函数即可。
+
+    ```python
+    def predict(self, input_ids, attention_mask, word_ids):
+        emit_scores, word_masks = self._bilstm(input_ids, attention_mask, word_ids)
+        pred = self.crf.decode(emit_scores, mask=word_masks)
+        return pred
+    ```
+
+
+
+### 1.2 数据预处理
+
+需要将原始数据处理成Bert-like model的输入。
+
+#### 数据格式转化
+
+原始数据是词语级别的，但是我们希望模型接受一个句子的输入，这样可以用上下文帮助分类。于是需要把一连串不相交的词语group成一个句子，实验中使用表示句子终止的标点符号作为句子的分隔符：也就是如果看到了一个词语等于`。`，`！`，`？`等符号，就截断当前句子，开始新的句子。但是实际当中，按照这样分句会使得句子分词以后长度大于512，也就是Bert-like model的输入长度限制。于是进一步地，如果一句句子到了128个词语尚未结束，那么就通过逗号等符号分割句子。经过测试，128是一个即保证句子不会太短，又保证句子不会溢出的合适的长度。
+
+由于篇幅原因，此处只展示分句部分的代码：
+
+```python
+# split on these symbols
+splitter = ['。', '.', '．', '!', '！', '?', '？']
+sentences = []
+sentence_labels = []
+start = 0
+for i in range(len(words)):
+    if words[i] in splitter:
+        sentence = words[start:i+1]
+        sentence_label = labels[start:i+1]
+        start = i+1
+        sentences.append(sentence)     
+        sentence_labels.append(sentence_label)
+    # in case sentence is too long
+    if i - start > 128 and words[i] in ['，', ',', '、', '、']:
+        sentence = words[start:i+1]
+        sentence_label = labels[start:i+1]
+        start = i+1
+        sentences.append(sentence)     
+        sentence_labels.append(sentence_label)
 ```
 
-3.4 解码(`CRF.predict`)
+使用pytorch的Dataset包装转化后的数据，其中某一个样本的数据格式如下：
 
-解码的目标是找到概率最大的label序列。这个问题和计算partition score的问题是一样的，只是我们要找到最大的score对应的序列，而不是求和。我们可以用viterbi算法解决这个问题。viterbi算法和前述的动态规划结构完全一致，只是把logsumexp换为max，然后需要记录每个子问题的解序列。我们定义一个矩阵`alpha`，其中`alpha[t, k]`表示时间t时为label k的所有序列的最大得分。当子问题`alpha[t-1, k']`对于任何$k'$已经解决时，我们可以用如下公式解决子问题`alpha[t, k]`：
+```python
+{
+    'text': ['我', '住在', '北京', '市', '海淀', '区', '中关村', '街道', '上', '。'],
+    'label': ['O', 'O', 'B-GPE', 'E-GPE', 'B-GPE', 'E-GPE', 'B-LOC', 'E-LOC', 'O', 'O']
+}
+```
 
-$$
-\alpha[0, k] = start\_score[k] \\
-\alpha[t, k] = Max_{k'}(\alpha[t-1, k'] + emit\_score_t[k] + transition\_score[k', k]) = Max_{k'}(\alpha[t-1, k'] + transition\_score[k', k]) + emit\_score_t[k] \   (t > 0, t < T) \\
-\alpha[T, k] = Max_{k'}(\alpha[T-1, k'] + end\_score[k'])
-$$
+#### 数据编码
 
-由于我们并不是想要最大的score，而是得到最大score对应的label序列，所以我们还需要记录每个子问题的解序列。我们定义一个矩阵`bptrs`(back pointers)，其中`bptrs[t, k]`表示得到时间t时为label k中的所有序列的最大得分的序列的上一个时间步的label。这个矩阵的构建和`alpha`矩阵一样，只是把max换为argmax。最后，我们从最后一个时间步([STOP])开始，根据`bptrs`逐步回溯，然后去掉[START]就可以得到最大score对应的label序列。
+接下来，需要把包括text和label的字符串都转化为数字，顺便得到没有pad的attention_mask和word_ids。
+
+对于label来说，只要随便给不同的自然数，并且保证解码时使用相同的映射即可。
+
+```python
+# train.py line 47
+encoding['labels'] = [[LABEL_TO_IDX[y] for y in b] for b in example['labels']]
+```
+
+对于text，需要按照Bert-like model的tokenizer vocabulary进行转化；并且由于Bert-like model使用subword预训练，还要先将词语分割为subword tokens，再加上模型特殊的special tokens，最后按照vocabulary转为input_ids。这一步只需要调用Huggingface的tokenizer即可。tokenizer输出的batch encoding不仅包括input_ids和attention_mask，还包括word_ids，其中前两者已经都为数字，而word_ids中special tokens对应的还是None，需要转为-1。
+
+```python
+# train.py line 44~46
+encoding = tokenizer(example["text"], is_split_into_words=True)
+encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['labels']))]
+encoding['word_ids'] = [list(map(lambda x: -1 if x is None else x, word_id)) for word_id in encoding['word_ids']]
+```
+
+总体来说，从Dataset转为用数字编码的数据的代码如下：
+
+```python
+def tokenize(example):
+    encoding = tokenizer(example["text"], is_split_into_words=True)
+    encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['labels']))]
+    encoding['word_ids'] = [list(map(lambda x: -1 if x is None else x, word_id)) for word_id in encoding['word_ids']]
+    encoding['labels'] = [[LABEL_TO_IDX[y] for y in b] for b in example['labels']]
+    return encoding
+```
+
+例：
+
+![mapped](./images/mapped.png)
+
+#### 批次collate
+
+生成批次时，需要考虑到不同批次拥有不同的tokens数量。需要把每个输入的input_ids, attention_mask, labels, word_ids都pad到最长的长度。
+    
+其中input_ids和attention_mask的padding由模型的tokenizer pad方法负责，这样它能按照[PAD]的id来正确地pad input_ids。
+    
+而此方法不能处理labels和word_ids，所以使用更低层的方法pad这两个序列：torch.nn.utils.rnn.pad_sequence，它接受一个list，每个元素是一个LxD的tensor，L可变，D不可变。函数stack这些tensor，并且pad给定的值到最长的长度。
+
+代码如下：
+
+```python
+class NERDataCollator(DataCollatorWithPadding):
+    def __call__(self, features):
+        # need to select these because tokenizer.pad does not pad other names even if they are in the features
+        # then it still transfer all keys to tensors, which's impossible because of some of them have different lengths
+        need_padding = ['input_ids', 'attention_mask'] 
+        batch = self.tokenizer.pad([{k: feature[k] for k in need_padding} for feature in features], padding='longest', return_tensors='pt')
+        word_ids = [torch.tensor(feature['word_ids']) for feature in features]
+        word_ids = pad_sequence(word_ids, padding_value=-1, batch_first=True)
+        if 'labels' not in features[0]:
+            return {'input_ids': batch['input_ids'], 'attention_mask': batch['attention_mask'], 'word_ids': word_ids}
+        labels = [torch.tensor(feature['labels']) for feature in features]
+        labels = pad_sequence(labels, padding_value=0, batch_first=True)
+        return {'input_ids': batch['input_ids'], 'attention_mask': batch['attention_mask'], 'word_ids': word_ids, 'labels': labels}
+```
+
+例:
+
+![collated](./images/collated.png)
 
 
+实验的训练，验证和测试等流程都交给了Pytorch Lightning的Trainer来处理，只需要写出基本的train_step, val_step, on_validation_epoch_end等方法即可。
+
+### 1.3 训练
+
+首先需要初始化模型（于Lightning Module的`__init__`方法中），optimizer&scheduler（于Lightning Module的`configure_optimizers`方法中），数据加载器（`Trainer.fit`的传入参数中）。
+
+然后只需要写出一个返回batch loss的train_step， `Trainer.fit`就可以正确训练模型。训练模式的开启，loss的backward，optimizer的step等都由Trainer来处理。
+
+    ```python
+    def training_step(self, batch, batch_idx):
+        loss = self.model.calculate_loss(**batch)
+        self.log('train_loss', loss, prog_bar=True)
+        return loss
+    ```
+
+### 1.4 验证
+
+这里需要先写validation step的方法，其调用前述的calculate_loss和predict，得到的validation step loss和validation step prediction累积到2个列表里，以便在validation epoch结束时计算平均loss和总的Macro F1。为了方便观察，最好把被编码的标签转回字符串。
+
+    ```python
+    def validation_step(self, batch, batch_idx):
+        input_ids, attention_mask, word_ids, gt = batch['input_ids'], batch['attention_mask'], batch['word_ids'], batch['labels']
+        pred = self.model.predict(input_ids=input_ids, attention_mask=attention_mask, word_ids=word_ids)
+        loss = self.model.calculate_loss(input_ids=input_ids, attention_mask=attention_mask, word_ids=word_ids, labels=gt)
+        pred = [[IDX_TO_LABEL[int(y)] for y in b] for b in pred]
+        gt = [[IDX_TO_LABEL[int(y)] for y in b] for b in gt]
+        self.val_gts.extend(gt)
+        self.val_preds.extend(pred)
+        self.val_losses.append(loss.item())
+        return gt, pred
+    ```
+
+最后在validation epoch结束时计算平均loss和总的Macro F1。平均loss的计算直接除validation step number即可，这么做的正确性由每一个step有相同数量的batch保证(除了最后一个step)。实验中重新实现了`classification_report`函数来计算Macro F1：先对每一句句子统计每一个label的TP, FP, FN，然后计算每一个label的Accuracy, Precision, Recall, F1, 最后对所有label的F1取平均得到Macro F1，返回的字典中包括了label-wise的F1和Macro Accuracy, Precision, Recall, F1。`classification_report`的代码冗长，此处不展示。on_validation_epoch_end的代码如下:
+
+    ```python
+    def on_validation_epoch_end(self):
+        report = classification_report(self.val_gts, self.val_preds, LABELS)
+        self.log_dict(report, prog_bar=True)
+        self.log('val_f1', report['macro avg_f1-score'], prog_bar=True)
+        avg_loss = sum(self.val_losses) / len(self.val_losses)
+        self.log('val_loss', avg_loss, prog_bar=True)
+        self.val_gts.clear()
+        self.val_preds.clear()
+        self.val_losses.clear()
+    ```
+
+### 1.5 测试
+
+测试比较简单，因为只需要输出prediction，写到文件中即可。测试的单步和验证的单步基本一致，只是不需要计算loss。测试的代码如下：
+
+```python
+def test_step(self, batch, batch_idx):
+    input_ids, attention_mask, word_ids = batch['input_ids'], batch['attention_mask'], batch['word_ids']
+    pred = self.model.predict(input_ids=input_ids, attention_mask=attention_mask, word_ids=word_ids)
+    self.test_preds.extend(pred)
+    return pred
+
+def on_test_epoch_end(self):
+    self.test_preds = sum(self.test_preds, [])
+    self.test_preds = [IDX_TO_LABEL[int(y)] for y in self.test_preds]
+    run_name = get_run_name(self.hparams)
+    with open(f'outputs/{run_name}.txt', 'w') as f:
+        f.write('expected\n')
+        for p in self.test_preds:
+            f.write(f'{p}\n')
+```

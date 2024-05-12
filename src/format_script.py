@@ -22,7 +22,6 @@ replacements = {
 input_dir = 'outputs'
 output_dir = 'results'
 for input_file in os.listdir(input_dir):
-    import pdb; pdb.set_trace()
     df = pd.read_csv(os.path.join(input_dir, input_file))
     df = df.replace(replacements)
     df = df.reset_index(drop=True)

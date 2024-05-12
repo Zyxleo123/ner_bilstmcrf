@@ -34,7 +34,7 @@ class BiLSTMCRF(nn.Module):
     def _bilstm(self, input_ids, attention_mask, word_ids):
         start_time = time.time()
         embeds = self.bert_like_model(input_ids, attention_mask=attention_mask).last_hidden_state
-        embeds = embeds.permute(1, 0, 2)
+        embeds = embeds.permute(1, 0, 2) # change to time-step first
         print(f"Embedding time: {time.time()-start_time:.2f}s")
 
         feats, self.state = self.lstm(embeds)
@@ -55,7 +55,7 @@ class BiLSTMCRF(nn.Module):
         # word_nums marks how many words each batch has
         word_nums = torch.max(word_ids, dim=1)[0] + 1 # B
         # char_nums marks how many non-special tokens(subwords) each batch has
-        char_nums = torch.sum(attention_mask, dim=1) - 2 # B
+        char_nums = torch.sum(attention_mask, dim=1) - 2 # take off 2 special tokens of bert; B
         max_word_num = torch.max(word_nums)
         word_char_num = torch.zeros(max_word_num, B, dtype=torch.long, device=char_feats.device)
 
