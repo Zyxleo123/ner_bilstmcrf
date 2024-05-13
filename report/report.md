@@ -536,7 +536,9 @@ def on_test_epoch_end(self):
 
 ![nonzero_bias](./images/nonzero_bias.png)
 
-可是，实际上，padding的影响似乎不一定是不好的。
+实验中，我假设padding的影响是一定不好的，于是我按照全0的方法处理了padding。我当时实际上忽视了Bert会将全0的变为非全0的特征，我也错误地没有紧接用attention mask再把它们清零。于是我在全部实验完成后，又实验了正确实现padding的处理的结果，并且外加了一组实验，其中权重，初始状态，bias和padding都是非0的，相当于无视这个问题。实验结果如下：
+
+可见，这个忧虑可能是多余的(至少当收敛本来就不成问题时)。我猜测也许是因为padding对状态进行的改变类似也相当于是为真正的输入作随机的状态初始化（得益于lstm的tanh函数限制了状态的范围）。所以padding的影响并不是很大。在unbatched的场景下（比如validation和test），初始化非0状态有另外的好处：可以使下一个句子用上一个句子的状态作为初始状态，其效果没有实验验证。
 
 ### 2.2 计算性能
 
@@ -544,18 +546,58 @@ def on_test_epoch_end(self):
 
 (此部分由于进行于实验前期，其log和代码都已经被删除，所以只能通过回忆来写)
 
-一开始，我实现了一个直观简单的版本。对于我使用2层循环，第一层循环遍历batch，第二层循环遍历每个时间步。这么做耗时很长，通过计时可知每一次要花费7s左右（batch_size大概是12），于是成为了训练更多epoch的瓶颈之一。
+一开始，我实现了一个直观简单的版本。使用2层循环，第一层循环遍历batch，第二层循环遍历每个时间步。这么做耗时很长，通过计时可知每一次要花费7s左右（batch_size大概是12），于是成为了训练更多epoch的瓶颈之一。
 
-于是我着手优化这个函数。优化的方式就是用张量运算代替循环。这样的好处是，张量运算是高度并行的，所以可以利用GPU的并行计算能力。我找到两个函数，`torch.bincount`和`torch.index_add_`，这样使得时间步的循环并行化了。最后，batch size=12的情况下，每次调用此函数需要0.08s，如下图`Convert time`所示。
+于是着手优化这个函数，优化的方式就是用张量运算代替循环。这样的好处是，张量运算是高度并行的，所以可以利用GPU的并行计算能力。我找到两个函数，`torch.bincount`和`torch.index_add_`，这样使得时间步的循环并行化了。最后，batch size=12的情况下，每次调用此函数需要0.08s，如下图`Convert time`所示。
 
 ![convert](./images/convert.png)
 
-不过，当batch size上升，自然这个函数的耗时会线性增加，慢慢地又成为了瓶颈之一。由于最后每个epoch耗时可以接受(~10min)，所以我没有进一步优化。
+不过，当batch size上升，自然这个函数的耗时会线性增加，慢慢地又成为了瓶颈之一。由于最后每个epoch耗时可以接受(~10min)，没有进一步优化。
 
 #### CRF
 
 CRF在上文中的实现的线性规划是两层循环：外层为时间步，内层为label。可见，这个实现已经把batch给并行化了。由于动态规划限制了后面的时间步必须等待前面的时间步的结果，所以时间步不可以并行化。但是Label确可以并行化。我没有自己实现CRF的张量化版本，而是直接调用了pytorch-crf的实现，它的实现就是只用了一个时间步的循环的。原来CRF一次损失计算要花费3s左右，现在只需要0.38s，如上图`CRF time`所示。
 
-### 2.3 Lr和BiLSTM hidden size的关系
+### 2.3 sgd vs adamw
 
-接下来，
+实验中发现adamw的效果远好于sgd。我猜测是因为adamw的自适应学习率可以更好地适应不同的参数，而模型中CRF和LSTM的参数的数量差异很大，CRF的transition matrix中每个参数的影响力远大于LSTM的任一个参数，所以adamw更适合这个任务。下面是当时的Tensorboard的结果，F1更高的那一组是adamw的结果。
+
+![adamw](./images/adamw.png)
+
+于是我在最后的实验中，都使用了adamw。
+
+### 2.4 lr的观察
+
+下面是一些使用`lr=5e-3`, `lr=5e-4`, `lr=1e-3`训练的`train_loss`的图，自上到下分别用`lstm_state_dim=1024`, `lstm_state_dim=512`, `lstm_state_dim=256`。
+
+![lr005_1](./images/lr005_1.png)
+
+![lr005_2](./images/lr005_2.png)
+
+![lr005_3](./images/lr005_3.png)
+
+共同之处在于，`lr=5e-3`的训练都很快就收敛了，但是最后收敛效果不如其它lr；不同之处在于随着lstm_state_dim的减小，`lr=5e-3`最后的收敛效果和其它lr的差距越来越小。lr越大，就越容易跳过最优点，所以最后的收敛效果不如其它lr。而lstm_state_dim越小，越适合用大的lr，所以`lr=5e-3`在lstm_state_dim=256的情况下表现最好。
+
+值得一提的是，train loss在这个任务下和validation F1的关系并不直接，比如，`lstm_state_dim=1024`的`lr=5e-3`虽然最后收敛的最差，但是validation F1却是最高的。这应该是由于即便模型对某个预测的自信度下降，也不影响它预测正确的标签；同理，即便模型对某个预测的自信度上升，也不影响它预测错误的标签。
+
+![lr005_4](./images/lr005_4.png)
+
+由于validation F1作为最终的评价指标的直接反映，和其关于lr的随机性，后续实验都不假设哪个lr最好，而是都进行搜索。
+
+### 2.5 Scheduler的选择
+
+为了解决类似上述静态学习率导致的问题，我尝试了3种scheduler：`Linear`，`CosineAnnealWarmRestarts`，`OneCycleLR`。Linear直接从初始lr线性下降到0；CosineAnnealWarmRestarts周期性地从初始lr下降到0；OneCycleLR先从最小lr上升到最大lr，然后再下降到最小lr。以下是`lr=5e-3`的实验结果：
+
+我设置了OneCycleLR的warm up为30%步。OneCycleLR收敛的比较慢，validation F1也不如其它两个。但是由于warm up的过程，其train loss和validation F1都很平滑。warm up的目的是使优化前期不稳定的阶段更稳定，但是本来收敛就很好，所以效果没有很明显。
+
+![onecycle_f1](./images/onecycle_f1.png)
+
+![onecycle_loss](./images/onecycle_loss.png)
+
+Linear直接从最大lr开始，没有warm up，所以收敛比较快，也因为这一点validation loss有些震荡。由于和其它scheduler一样，最后都将lr降到0，可以达到最好的validation F1。
+
+![linear_f1](./images/linear_f1.png)
+
+![linear_loss](./images/linear_loss.png)
+
+我设置了CosineAnnealWarmRestarts的周期为$\#epochs//5$。比起Linear，Anneal可以周期性地寻找最优点；而且由于没有warm up，所以收敛速度比OneCycleLR快。
