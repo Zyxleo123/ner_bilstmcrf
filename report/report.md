@@ -509,7 +509,11 @@ def on_test_epoch_end(self):
     self.test_preds = [IDX_TO_LABEL[int(y)] for y in self.test_preds]
     run_name = get_run_name(self.hparams)
     with open(f'outputs/{run_name}.txt', 'w') as f:
-        f.write('expected\n')
+        f.write('expected\n') # id is added afterwards
         for p in self.test_preds:
             f.write(f'{p}\n')
 ```
+
+## 2. 实验过程和结果
+
+首先，我注意到了一个问题：BiLSTM如何处理padding？不像单向的循环神经网络，BiLSTM的每一个时间步的输出取决于一整个序列，其中也包括padding，于是我们不希望padding的存在影响其它时间步的状态。由于Pytorch的BiLSTM不能输入mask，所以可以输入2个全零的状态(cell state & hidden state)来避免，理由如下：
