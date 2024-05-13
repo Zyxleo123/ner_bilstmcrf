@@ -516,4 +516,46 @@ def on_test_epoch_end(self):
 
 ## 2. 实验过程和结果
 
-首先，我注意到了一个问题：BiLSTM如何处理padding？不像单向的循环神经网络，BiLSTM的每一个时间步的输出取决于一整个序列，其中也包括padding，于是我们不希望padding的存在影响其它时间步的状态。由于Pytorch的BiLSTM不能输入mask，所以可以输入2个全零的状态(cell state & hidden state)来避免，理由如下：
+### 2.1 BiLSTM的padding问题
+
+首先，我注意到了一个问题：BiLSTM如何处理padding？不像单向的循环神经网络，BiLSTM的每一个时间步的输出取决于一整个序列，其中也包括padding。经过分析与验证，我发现需要3点才能保证padding不影响其它时间步的状态：1. padding的特征是全0；2. 初始状态是全0；3. BiLSTM不使用bias，也就是bias是全0。第一点可以通过乘attention mask实现；第二点通过输入BiLSTM初始状态None实现；第三点通过初始化BiLSTM`bias=False`实现。
+
+验证如下，分别向bias=False的bilstm输入2个unbatched输入，两个输入的1st time step=[1,1]。第一个输入(pad_1_step)有一个全0 padding，第二个输入(pad_2_steps)有两个全0 padding。如果padding没有任何影响的话，那么两个输入的1st time step输出应该是一样的。实验结果如下：
+
+![nobias](./images/nobias.png)
+
+如果padding非0：
+
+![nonzero_pad](./images/nonzero_pad.png)
+
+如果状态非0：
+
+![nonzero_state](./images/nonzero_state.png)
+
+如果bias非0：
+
+![nonzero_bias](./images/nonzero_bias.png)
+
+可是，实际上，padding的影响似乎不一定是不好的。
+
+### 2.2 计算性能
+
+#### _char_feat_to_word_feat
+
+(此部分由于进行于实验前期，其log和代码都已经被删除，所以只能通过回忆来写)
+
+一开始，我实现了一个直观简单的版本。对于我使用2层循环，第一层循环遍历batch，第二层循环遍历每个时间步。这么做耗时很长，通过计时可知每一次要花费7s左右（batch_size大概是12），于是成为了训练更多epoch的瓶颈之一。
+
+于是我着手优化这个函数。优化的方式就是用张量运算代替循环。这样的好处是，张量运算是高度并行的，所以可以利用GPU的并行计算能力。我找到两个函数，`torch.bincount`和`torch.index_add_`，这样使得时间步的循环并行化了。最后，batch size=12的情况下，每次调用此函数需要0.08s，如下图`Convert time`所示。
+
+![convert](./images/convert.png)
+
+不过，当batch size上升，自然这个函数的耗时会线性增加，慢慢地又成为了瓶颈之一。由于最后每个epoch耗时可以接受(~10min)，所以我没有进一步优化。
+
+#### CRF
+
+CRF在上文中的实现的线性规划是两层循环：外层为时间步，内层为label。可见，这个实现已经把batch给并行化了。由于动态规划限制了后面的时间步必须等待前面的时间步的结果，所以时间步不可以并行化。但是Label确可以并行化。我没有自己实现CRF的张量化版本，而是直接调用了pytorch-crf的实现，它的实现就是只用了一个时间步的循环的。原来CRF一次损失计算要花费3s左右，现在只需要0.38s，如上图`CRF time`所示。
+
+### 2.3 Lr和BiLSTM hidden size的关系
+
+接下来，
