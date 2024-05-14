@@ -9,7 +9,6 @@ class NERDataCollator(DataCollatorWithPadding):
         # then it still transfer all keys to tensors, which's impossible because of some of them have different lengths
         need_padding = ['input_ids', 'attention_mask'] 
         batch = self.tokenizer.pad([{k: feature[k] for k in need_padding} for feature in features], padding='longest', return_tensors='pt')
-        max_length = batch['input_ids'].shape[1]
 
         # for word_ids, it needs to be padded to the max length that equals to the max length of tokens.
         # word_ids = [feature['word_ids'] for feature in features]

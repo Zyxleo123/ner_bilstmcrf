@@ -568,7 +568,7 @@ CRF在上文中的实现的线性规划是两层循环：外层为时间步，�
 
 ### 2.4 lr的观察
 
-下面是一些使用`lr=5e-3`, `lr=5e-4`, `lr=1e-3`训练的`train_loss`的图，自上到下分别用`lstm_state_dim=1024`, `lstm_state_dim=512`, `lstm_state_dim=256`。
+下面是实验中期，F1可以达到40~50%时，使用`lr=5e-3`, `lr=5e-4`, `lr=1e-3`训练的`train_loss`，自上到下分别用`lstm_state_dim=1024`, `lstm_state_dim=512`, `lstm_state_dim=256`。
 
 ![lr005_1](./images/lr005_1.png)
 
@@ -577,6 +577,18 @@ CRF在上文中的实现的线性规划是两层循环：外层为时间步，�
 ![lr005_3](./images/lr005_3.png)
 
 共同之处在于，`lr=5e-3`的训练都很快就收敛了，但是最后收敛效果不如其它lr；不同之处在于随着lstm_state_dim的减小，`lr=5e-3`最后的收敛效果和其它lr的差距越来越小。lr越大，就越容易跳过最优点，所以最后的收敛效果不如其它lr。而lstm_state_dim越小，越适合用大的lr，所以`lr=5e-3`在lstm_state_dim=256的情况下表现最好。
+
+下面是实验后期，F1可以达到~90%时，使用`lr=5e-3`, `lr=5e-4`, `lr=1e-3`训练的`train_loss`，自上到下分别用`lstm_state_dim=1024`, `lstm_state_dim=512`, `lstm_state_dim=256`，全部没有使用scheduler。
+
+![lr005_5](./images/lr005_5.png)
+
+![lr005_6](./images/lr005_6.png)
+
+![lr005_7](./images/lr005_7.png)
+
+可以明显地发现lr越大，则train loss的震荡越大，收敛效果越差；而lstm_state_dim越小，train loss的震荡越小，收敛效果越好。而如果都使用合适的学习率，不同的lstm_state_dim可以取得相似的收敛效果(如图：`smoothed train loss=0.0019`)。
+
+也可以观察到相似的震荡发生在validation F1上，但是这个最后都可以达到一个比较好的值。在此不展示截图。
 
 值得一提的是，train loss在这个任务下和validation F1的关系并不直接，比如，`lstm_state_dim=1024`的`lr=5e-3`虽然最后收敛的最差，但是validation F1却是最高的。这应该是由于即便模型对某个预测的自信度下降，也不影响它预测正确的标签；同理，即便模型对某个预测的自信度上升，也不影响它预测错误的标签。
 
@@ -588,16 +600,33 @@ CRF在上文中的实现的线性规划是两层循环：外层为时间步，�
 
 为了解决类似上述静态学习率导致的问题，我尝试了3种scheduler：`Linear`，`CosineAnnealWarmRestarts`，`OneCycleLR`。Linear直接从初始lr线性下降到0；CosineAnnealWarmRestarts周期性地从初始lr下降到0；OneCycleLR先从最小lr上升到最大lr，然后再下降到最小lr。以下是`lr=5e-3`的实验结果：
 
-我设置了OneCycleLR的warm up为30%步。OneCycleLR收敛的比较慢，validation F1也不如其它两个。但是由于warm up的过程，其train loss和validation F1都很平滑。warm up的目的是使优化前期不稳定的阶段更稳定，但是本来收敛就很好，所以效果没有很明显。
+下图展示了`lstm_state_dim=512`，`lr=5e-3`的3种scheduler和无scheduler的`train_loss`(Onecycle的warm up为30%步；CosineAnnealWarmRestarts的周期为$\#epochs//5$不变；其余都用默认参数)：
 
-![onecycle_f1](./images/onecycle_f1.png)
+![scheduler_loss](./images/scheduler_loss.png)
 
-![onecycle_loss](./images/onecycle_loss.png)
+Onecycle的loss一开始减少的很慢，但是由于比较稳定，最后收敛的最好；Linear由于最后lr也减少到0，收敛的也很好，与Onecycle相似；Anneal由于在训练过程中相较其它scheduler最多次使用大的lr，于是收敛速度整体最快，但是由于不断地重启，所以最后收敛效果没有其它好（这也是由于Onecycle和Linear收敛的太好了的关系）；无scheduler的收敛效果最差，它在最后还使用最大的lr，导致不能较好收敛。
 
-Linear直接从最大lr开始，没有warm up，所以收敛比较快，也因为这一点validation loss有些震荡。由于和其它scheduler一样，最后都将lr降到0，可以达到最好的validation F1。
+在validation的相关指标上，我并不能观察到scheduler的这些特征，这再次印证了training的收敛效果和validation的指标不一定直接有关。除了onecycle：validation loss低，且稳定；validation F1稳步上升，但是不高。在此不展示截图。
 
-![linear_f1](./images/linear_f1.png)
+我最后选择了CosineAnnealWarmRestarts。因为我认为训练更多epochs的情况下，它相较于其它调度器可以发现更多的最优点，而可能某一个就能使得validation F1更高。
 
-![linear_loss](./images/linear_loss.png)
+### 2.6 数据增强
 
-我设置了CosineAnnealWarmRestarts的周期为$\#epochs//5$。比起Linear，Anneal可以周期性地寻找最优点；而且由于没有warm up，所以收敛速度比OneCycleLR快。
+实验中期时，试图增强数据来提高少数类的F1。由于我只是想要让模型多预测这些少数类，而这些预测的accuracy不重要，这样以期提高少数类的recall。这个过程必然会降低其它类的recall，于是最后需要取得一个折衷。可惜的是，我使用的数据增强似乎过于简单了：我将少数类的数据简单地复制了几次随机插入到原数据中，用这种方式reward模型多预测少数类。模型似乎并没有“理睬”这个改变，也就是仍然不怎么倾向于预测少数类。我猜测这是因为模型只是比起以前更加倾向于将**看过**的少数类更多的确实预测为该少数类，但是由于数据增强的方式过于简单，模型的行为不能泛化到其它数据。拿二维特征上的二分类打比方，这么增强相当于把决策边界的某一处极大地扭曲到某一个数据点周围把它半包住，但是其余处丝毫没有改变。我认为更好的增强应该涉及到更多的数据：这些数据可以概括少数类的特征，而且覆盖一定的空间，这样模型才能更好地泛化到其它数据。比如要把人名换成其它人名，地名换成其它地名，企业名换成其它企业名等等，然后标注它们所希望模型预测更多的label。但是由于时间有限，我没有实现这个想法。
+
+### 2.7 预训练模型的影响
+
+实验中影响F1最大的其实是预训练模型的选择。使用任务无关的预训练Bert只能达到40-50的F1，但是用在OntoNotes5上预训练的Bert可以达到90的F1。这是因为相当于使用的模型多用了
+
+### 2.8 Ablation Study
+
+分别将Bert去除（换成随机初始化的embedding），BiLSTM去除，以及交换BiLSTM和`_char_feat_to_word_feat`的位置，观察F1的变化。(CRF去除需要改变损失计算和预测的代码，所以没有实验)
+
+使用的超参数：`bert_lr=0(freeze)`，`lstm_lr=5e-3`，`lstm_state_dim=256`，`scheduler=OneCycleLR（因为比较稳定，适合做实验）`，`adamw`，`epochs=10`，`batch_size=12`，`pretrained_model_name=ckiplab/bert-base-chinese-ner`。
+
+| Model | F1 |
+| --- | --- |
+| noBert | 0.92 |
+| noBiLSTM | 0.92 |
+| swap | 0.92 |
+| baseline | 0.8842 |

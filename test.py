@@ -29,6 +29,7 @@ def test(path):
     def tokenize(example):
         encoding = tokenizer(example["text"], is_split_into_words=True)
         encoding['word_ids'] = [encoding.word_ids(b) for b in range(len(example['text']))]
+        encoding['word_ids'] = [list(map(lambda x: -1 if x is None else x, word_id)) for word_id in encoding['word_ids']]
         return encoding
     test_dataset = test_dataset.map(tokenize, batched=True, remove_columns=["text"], batch_size=32)
 
