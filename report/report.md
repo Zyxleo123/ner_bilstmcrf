@@ -538,6 +538,8 @@ def on_test_epoch_end(self):
 
 实验中，我假设padding的影响是一定不好的，于是我按照全0的方法处理了padding。我当时实际上忽视了Bert会将全0的变为非全0的特征，我也错误地没有紧接用attention mask再把它们清零。于是我在全部实验完成后，又实验了正确实现padding的处理的结果，并且外加了一组实验，其中权重，初始状态，bias和padding都是非0的，相当于无视这个问题。实验结果如下：
 
+![pad_comparison](./images/pad_comparison.png)
+
 可见，这个忧虑可能是多余的(至少当收敛本来就不成问题时)。我猜测也许是因为padding对状态进行的改变类似也相当于是为真正的输入作随机的状态初始化（得益于lstm的tanh函数限制了状态的范围）。所以padding的影响并不是很大。在unbatched的场景下（比如validation和test），初始化非0状态有另外的好处：可以使下一个句子用上一个句子的状态作为初始状态，其效果没有实验验证。
 
 ### 2.2 计算性能
@@ -616,7 +618,9 @@ Onecycle的loss一开始减少的很慢，但是由于比较稳定，最后收�
 
 ### 2.7 预训练模型的影响
 
-实验中影响F1最大的其实是预训练模型的选择。使用任务无关的预训练Bert只能达到40-50的F1，但是用在OntoNotes5上预训练的Bert可以达到90的F1。这是因为相当于使用的模型多用了
+实验中影响F1最大的其实是预训练模型的选择。使用任务无关的预训练Bert只能达到40-50的F1，但是用在OntoNotes5上预训练过NER的Bert可以达到90的F1。我认为这是因为在NER上预训练过的Bert会将词语按照实体的角度进行词向量嵌入：也就是它的嵌入是为了帮助预测头分类实体的，那么实体角度的语义和实体角度的上下文就会被Bert的自注意力头抓到。这样的话，实际上模型的泛化能力会比较强：没有见过的词语如果被嵌入在见过的词语的相邻处，那么很有可能预测头会输出相同的标签；并且它对上下文信息的利用更加有效。而普通的Bert只提供合理的词向量嵌入，却不能帮助特定的任务；如果要他的词向量可以帮助特定的任务，则需要大量数据来fine-tune，但是下游任务的数据往往是不够的；于是预测头(BiLSTM-CRF)对于能否把实体含义并不明确的词向量正确分类的责任就更大了，但是预测头的参数量不大，架构简单，所以表现不好。
+
+使用普通的Bert，会将test set中的"中国"预测为"O"，这是因为train set里，中国不都是"S-GPE"，有时候是企业名的一部分，还有时标注错误为"O"，所以最终使得模型预测为"O"。而使用OntoNotes5预训练的Bert，会将"中国"预测为"S-GPE"，这可能是和其它国家泛化的结果。
 
 ### 2.8 Ablation Study
 
@@ -626,7 +630,40 @@ Onecycle的loss一开始减少的很慢，但是由于比较稳定，最后收�
 
 | Model | F1 |
 | --- | --- |
-| noBert | 0.92 |
-| noBiLSTM | 0.92 |
-| swap | 0.92 |
-| baseline | 0.8842 |
+| noBert | 0.345 |
+| noBiLSTM | 0.8867 |
+| swap | 0.8945 |
+| baseline | 0.8876 |
+
+可见，用不用BiLSTM的区别不大，因为预训练模型太强大了；而用不用Bert的话，会比使用普通的Bert少~10%的F1，比使用OntoNotes5预训练的Bert少~55%的F1。而交换BiLSTM和`_char_feat_to_word_feat`的位置，会使得F1略微提高。这么做使得BiLSTM考虑完整的词语的上下文，而不是考虑单个汉字的上下文。
+
+### 2.9 最终结果
+
+最终，超参数为`lstm_state_dim=512`，`lstm_lr=5e-3`，`bert_lr=0(freeze)`，`scheduler=CosineAnnealWarmRestarts`，`adamw`，`epochs=50`，`batch_size=12`，`pretrained_model_name=ckiplab/bert-base-chinese-ner`。adamw的参数为默认参数；CosineAnnealWarmRestarts的参数为`T_0=10`，`T_mult=1`。`_char_feat_to_word_feat`放在BiLSTM之前。
+
+由于我同时记录了best validation loss和best validation F1的模型，我可以尝试在这两个模型上进行测试。最后测试下来，validation loss最低的模型的test Macro F1是0.90686，而这个模型的validation Macro F1只是0.8879；而validation F1最高的模型的test Macro F1是0.89824，而这个模型的validation Macro F1是0.9001。这可能说明validation loss更能反映模型的能力。
+
+## 3. 对课堂内容的思考
+
+- RNN： 能够保留以前的信息，但由于隐藏状态一直在用乘法变化，因此很难回忆起长期依赖关系。
+- Cell state： 它只会经受一些受控制的微小线性改动，从而信息很容易沿着它原封不动地流动。
+
+![cell](./images/cell.png)
+
+- 门：查看 $h_{t-1}$ 和 $x_t$，并为Cell state $C_{t-1}$ 中的每个数字输出一个介于0和1之间的数字。
+
+- 遗忘门：决定我们要从单元状态中丢弃哪些信息。$f_t = \sigma(W_f[h_{t-1},x_t]+b_f)$。
+  - 例如，当看到一个新的主语时，它可能想要丢弃单元状态中之前的“性别”信息。
+  - 注：遗忘门的功能不能被输入门包含：因为输入门的输出不依赖Cell state，而如果想要遗忘"性别"信息，必须要知道Cell state中的"性别"具体是什么，才能加上它的相反数来达到遗忘的效果，再加上新的性别。但是原始的LSTM是不支持Cell state决定门输出的。
+
+- 输出门：决定输出什么。由于我们并不一定需要输出全部的历史信息，所以我们必须对cell state进行过滤，以得到相关的hidden state。$o_t = \sigma(W_o[h_{t-1},x_t] + b_o)$
+  - 例如（auto regression）当想要预测一个动词时，lstm可能希望在cell state输出“时态”信息
+
+- 输入门：决定在cell state中存储哪些新信息。$i_t = \sigma(W_i[h_{t-1},x_t]+b_i)$。
+  - 例如，当看到空白时，lstm可能不想在cell state中存储任何信息
+
+## 4. 有趣现象
+
+训练过程中，某一个step开始train loss全部变成nan。我怀疑是因为transition matrix没有bound，并且有一些transition的信心非常低，比如"B-PER"到"B-PER"，于是这些transition score不断减少，最后计算partition时，由于绝大多数路径都是分数极低的，总和下溢出。
+
+![nan](./images/nan.png)
