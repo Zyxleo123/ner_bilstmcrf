@@ -35,7 +35,7 @@ def test(path):
 
     print("Initializing dataloader...")
     collator = NERDataCollator(tokenizer)
-    test_dataloader = DataLoader(test_dataset, collate_fn=collator, batch_size=1)
+    test_dataloader = DataLoader(test_dataset, collate_fn=collator, batch_size=64)
 
     trainer = Trainer()
     print("Start testing...")

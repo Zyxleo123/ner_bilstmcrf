@@ -667,3 +667,7 @@ Onecycle的loss一开始减少的很慢，但是由于比较稳定，最后收�
 训练过程中，某一个step开始train loss全部变成nan。我怀疑是因为transition matrix没有bound，并且有一些transition的信心非常低，比如"B-PER"到"B-PER"，于是这些transition score不断减少，最后计算partition时，由于绝大多数路径都是分数极低的，总和下溢出。
 
 ![nan](./images/nan.png)
+
+但是我实际去加载这个模型，然后打印下来transition matrix，发现transition matrix的值实际上量级非常小，甚至有些不可能的transition的分数也不是很低。比如`B-PER -> M-LOC`虽然不可能，但是分数是`-0.003`。于是我想要给transition matrix一个初值，将不可能的转换的初值设置为较低的实数。
+
+我将所有不可能的转换的分数设置为`-10000.`，开始训练，但是可能是由于数值太大，导致不能收敛；于是改成`-5.`。做了这个改动以后，模型在validation set上的F1没有上升，但是最低时的train loss降低了，这个是因为partition中不可能的路径的得分更低了。然而在测试集上，这个模型的F1只有0.80左右，
