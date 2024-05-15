@@ -26,7 +26,7 @@ class BiLSTMCRF(nn.Module):
         # The `self.set_transitions()` method in the `BiLSTMCRF` class is setting transition scores in
         # the CRF (Conditional Random Field) layer based on the predefined transition rules for the
         # specific named entity recognition task.
-        # self.set_transitions()
+        self.set_transitions(-5.0)
         self.dropout = nn.Dropout(0.3)
 
 
@@ -117,41 +117,41 @@ class BiLSTMCRF(nn.Module):
         print(f"CRF decode time: {time.time()-start_time:.2f}s")
         return pred
 
-    def set_transitions(self):
+    def set_transitions(self, fill):
         # from S-xxx to M-*/E-*
         for entity in ENTITY_SUB_TYPE:
-            self.crf.transitions.data[self.label_to_idx['S-'+entity], self.label_to_idx['M-'+entity]] = -10000.
-            self.crf.transitions.data[self.label_to_idx['S-'+entity], self.label_to_idx['E-'+entity]] = -10000.
+            self.crf.transitions.data[self.label_to_idx['S-'+entity], self.label_to_idx['M-'+entity]] = fill
+            self.crf.transitions.data[self.label_to_idx['S-'+entity], self.label_to_idx['E-'+entity]] = fill
 
         # from B-xxx to B-*/S-*/M-yyy/E-yyy/O/
         for to_entity in ENTITY_SUB_TYPE:
             for from_entity in ENTITY_SUB_TYPE:
-                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['B-'+to_entity]] = -10000.
-                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['S-'+to_entity]] = -10000.
+                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['B-'+to_entity]] = fill
+                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['S-'+to_entity]] = fill
                 if to_entity != from_entity:
-                    self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['M-'+to_entity]] = -10000.
-                    self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
-                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['O']] = -10000.
+                    self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['M-'+to_entity]] = fill
+                    self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['E-'+to_entity]] = fill
+                self.crf.transitions.data[self.label_to_idx['B-'+from_entity], self.label_to_idx['O']] = fill
 
         # from M-xxx to B-*/S-*/M-yyy/E-yyy/O/
         for to_entity in ENTITY_SUB_TYPE:
             for from_entity in ENTITY_SUB_TYPE:
-                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['B-'+to_entity]] = -10000.
-                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['S-'+to_entity]] = -10000.
+                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['B-'+to_entity]] = fill
+                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['S-'+to_entity]] = fill
                 if to_entity != from_entity:
-                    self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['M-'+to_entity]] = -10000.
-                    self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
-                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['O']] = -10000.
+                    self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['M-'+to_entity]] = fill
+                    self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = fill
+                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['O']] = fill
 
         
         # from E-* to M-*/E-*/
         for to_entity in ENTITY_SUB_TYPE:
             for from_entity in ENTITY_SUB_TYPE:
-                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
-                self.crf.transitions.data[self.label_to_idx['E-'+from_entity], self.label_to_idx['E-'+to_entity]] = -10000.
+                self.crf.transitions.data[self.label_to_idx['M-'+from_entity], self.label_to_idx['E-'+to_entity]] = fill
+                self.crf.transitions.data[self.label_to_idx['E-'+from_entity], self.label_to_idx['E-'+to_entity]] = fill
 
         # from O to M-*/E-*
         for entity in ENTITY_SUB_TYPE:
-            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['M-'+entity]] = -10000.
-            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['E-'+entity]] = -10000.
+            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['M-'+entity]] = fill
+            self.crf.transitions.data[self.label_to_idx['O'], self.label_to_idx['E-'+entity]] = fill
 
